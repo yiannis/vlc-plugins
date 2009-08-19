@@ -45,6 +45,8 @@ static void Destroy     ( vlc_object_t * );
 
 static picture_t *Filter( filter_t *, picture_t * );
 
+static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
+static picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr );
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -106,7 +108,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     return CopyInfoAndRelease( p_outpic, p_pic );
 }
 
-static picture_t* InputToRGB( filter_t *p_filter, picture_t *p_pic )
+picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic )
 {
     if (p_pic->format.i_chroma == VLC_CODEC_RGB24)
         return p_pic;
@@ -120,10 +122,33 @@ static picture_t* InputToRGB( filter_t *p_filter, picture_t *p_pic )
 
     picture_t *p_bgr = image_Convert( img_handler, p_pic, &fmt_in, &fmt_bgr );
 
+    /*Cleanup*/
     video_format_Clean( &fmt_in );
     video_format_Clean( &fmt_bgr );
     image_HandlerDelete( img_handler );
     return p_bgr;
+}
+
+picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr )
+{
+    if (p_filter->fmt_out.video.i_chroma == VLC_CODEC_RGB24)
+        return p_bgr;
+
+    video_format_t fmt_out;
+    video_format_t fmt_bgr;
+    video_format_Copy( &fmt_out, &p_filter->fmt_out.video );
+    video_format_Init( &fmt_bgr, VLC_CODEC_RGB24 );
+
+    image_handler_t *img_handler = image_HandlerCreate( p_filter );
+
+    picture_t *p_out = image_Convert( img_handler, p_bgr, &fmt_out, &fmt_bgr );
+
+    /*Cleanup*/
+    video_format_Clean( &fmt_out );
+    video_format_Clean( &fmt_bgr );
+    image_HandlerDelete( img_handler );
+    picture_Release(p_bgr);
+    return p_out;
 }
 
 /*
