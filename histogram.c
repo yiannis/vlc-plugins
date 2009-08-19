@@ -32,6 +32,8 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 
+#include <vlc_image.h>
+
 #include <vlc_filter.h>
 #include "filter_picture.h"
 
@@ -89,32 +91,41 @@ static void Destroy( vlc_object_t *p_this )
  *****************************************************************************/
 static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
-    picture_t *p_outpic;
-    int i_index;
-    int i_planes;
-
     if( !p_pic ) return NULL;
 
+    picture_t *p_outpic;
     p_outpic = filter_NewPicture( p_filter );
     if( !p_outpic )
     {
-        msg_Warn( p_filter, "can't get output picture" );
         picture_Release( p_pic );
         return NULL;
     }
 
-    if( p_pic->format.i_chroma == VLC_CODEC_YUVA )
-    {
-        /* We don't want to invert the alpha plane */
-        i_planes = p_pic->i_planes - 1;
-        vlc_memcpy(
-            p_outpic->p[A_PLANE].p_pixels, p_pic->p[A_PLANE].p_pixels,
-            p_pic->p[A_PLANE].i_pitch *  p_pic->p[A_PLANE].i_lines );
-    }
-    else
-    {
-        i_planes = p_pic->i_planes;
-    }
+    printf("Hello: Histogram plugin!\r");
 
     return CopyInfoAndRelease( p_outpic, p_pic );
 }
+
+static picture_t* InputToRGB( filter_t *p_filter, picture_t *p_pic )
+{
+    if (p_pic->format.i_chroma == VLC_CODEC_RGB24)
+        return p_pic;
+
+    video_format_t fmt_in;
+    video_format_t fmt_bgr;
+    video_format_Copy( &fmt_in, &p_filter->fmt_in.video );
+    video_format_Init( &fmt_bgr, VLC_CODEC_RGB24 );
+
+    image_handler_t *img_handler = image_HandlerCreate( p_filter );
+
+    picture_t *p_bgr = image_Convert( img_handler, p_pic, &fmt_in, &fmt_bgr );
+
+    video_format_Clean( &fmt_in );
+    video_format_Clean( &fmt_bgr );
+    image_HandlerDelete( img_handler );
+    return p_bgr;
+}
+
+/*
+ * vim: sw=4:ts=4:
+*/
