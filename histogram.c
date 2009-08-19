@@ -216,6 +216,8 @@ int histogram_init( histogram **h_in, size_t bins )
     if (!h_in || *h_in)
         return 1;
 
+    bins++; // Keep a spare zero bin at the end
+    //...for drop shaddow
     histogram *h_out = (histogram*)malloc( sizeof(histogram) );
     h_out->red   = (uint32_t*)calloc( bins, sizeof(uint32_t) );
     h_out->green = (uint32_t*)calloc( bins, sizeof(uint32_t) );
@@ -305,32 +307,60 @@ int histogram_normalize( histogram *h, uint32_t height )
 int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 )
 {
     const uint8_t max_value = 255;
+    const uint8_t floor = 50;
     int width = p_bgr->format.i_width,
         height = p_bgr->format.i_height;
     uint8_t * const data = p_bgr->p_data;
 
     for (uint32_t bin=0; bin < h->bins; bin++) {
        int x = x0+bin;
-       for (uint32_t j=0; j<h->red[bin]; j++) {
+       // Paint red histo
+       for (uint32_t j=0; j <= h->red[bin]; j++) {
           int y = y0+j;
           int index = xy2l(x,y,2,width,height);
           data[index] = max_value;
-          data[index-1] = 0;
-          data[index-2] = 0;
+          if (data[index-1] > floor) data[index-1] -= floor; else data[index-1] = 0;
+          if (data[index-2] > floor) data[index-2] -= floor; else data[index-1] = 0;
        }
-       for (uint32_t j=0; j<h->green[bin]; j++) {
+       // Drop shaddow [red]
+       for (uint32_t j=h->red[bin+1]; j<h->red[bin]; j++) {
+          int y = y0+j;
+          int index = xy2l(x+1,y,0,width,height);
+          data[index] = 10;
+          data[index+1] = 10;
+          data[index+2] = 10;
+       }
+       // Paint green histo
+       for (uint32_t j=0; j <= h->green[bin]; j++) {
           int y = y0+j+h->max.red+10;
           int index = xy2l(x,y,1,width,height);
           data[index] = max_value;
-          data[index-1] = 0;
-          data[index+1] = 0;
+          if (data[index-1] > floor) data[index-1] -= floor; else data[index-1] = 0;
+          if (data[index+1] > floor) data[index+1] -= floor; else data[index+1] = 0;
        }
-       for (uint32_t j=0; j<h->blue[bin]; j++) {
+       // Drop shaddow [green]
+       for (uint32_t j=h->green[bin+1]; j<h->green[bin]; j++) {
+          int y = y0+j+h->max.red+10;
+          int index = xy2l(x+1,y,0,width,height);
+          data[index] = 10;
+          data[index+1] = 10;
+          data[index+2] = 10;
+       }
+       // Paint blue histo
+       for (uint32_t j=0; j <= h->blue[bin]; j++) {
           int y = y0+j+h->max.red+10+h->max.green+10;
           int index = xy2l(x,y,0,width,height);
           data[index] = max_value;
-          data[index+1] = 0;
-          data[index+2] = 0;
+          if (data[index+1] > floor) data[index+1] -= floor; else data[index+1] = 0;
+          if (data[index+2] > floor) data[index+2] -= floor; else data[index+2] = 0;
+       }
+       // Drop shaddow [blue]
+       for (uint32_t j=h->blue[bin+1]; j<h->blue[bin]; j++) {
+          int y = y0+j+h->max.red+10+h->max.green+10;
+          int index = xy2l(x+1,y,0,width,height);
+          data[index] = 10;
+          data[index+1] = 10;
+          data[index+2] = 10;
        }
     }
 
