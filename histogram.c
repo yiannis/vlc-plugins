@@ -57,6 +57,7 @@ typedef struct {
     struct max_ max;
     size_t bins;
 } histogram;
+static int histogram_init( histogram **h_in, size_t bins );
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -107,6 +108,10 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
     picture_t *p_bgr = Input2BGR( p_filter, p_pic );
     save_ppm( p_bgr, "out.ppm" );
+
+    const int max_value = 255;
+    histogram *histo = NULL;
+    histogram_init( &histo, max_value+1 ); // Number of bins is 0-max_value
 
     picture_Release( p_bgr );
 
@@ -212,7 +217,10 @@ int histogram_init( histogram **h_in, size_t bins )
     h_out->bins = bins;
 
     *h_in = h_out;
+    return 0;
 }
+
+
 /*
  * vim: sw=4:ts=4:
 */
