@@ -48,6 +48,15 @@ static picture_t *Filter( filter_t *, picture_t * );
 static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
 static picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr );
 static void save_ppm( picture_t *p_bgr, const char *file );
+
+typedef struct {
+    struct max_ {
+        uint32_t red, green, blue;
+    };
+    uint32_t *red, *green, *blue;
+    struct max_ max;
+    size_t bins;
+} histogram;
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -96,7 +105,12 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
     if( !p_pic ) return NULL;
 
-    picture_t *p_outpic;
+    picture_t *p_bgr = Input2BGR( p_filter, p_pic );
+    save_ppm( p_bgr, "out.ppm" );
+
+    picture_Release( p_bgr );
+
+    picture_t *p_outpic = NULL;
     p_outpic = filter_NewPicture( p_filter );
     if( !p_outpic )
     {
@@ -142,13 +156,13 @@ picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr )
 
     image_handler_t *img_handler = image_HandlerCreate( p_filter );
 
-    picture_t *p_out = image_Convert( img_handler, p_bgr, &fmt_out, &fmt_bgr );
+    picture_t *p_out = image_Convert( img_handler, p_bgr, &fmt_bgr , &fmt_out );
 
     /*Cleanup*/
     video_format_Clean( &fmt_out );
     video_format_Clean( &fmt_bgr );
     image_HandlerDelete( img_handler );
-    picture_Release(p_bgr);
+    picture_Release( p_bgr );
     return p_out;
 }
 
@@ -179,7 +193,26 @@ void save_ppm( picture_t *p_bgr, const char *file )
     free( data_tmp );
 }
 
+int histogram_init( histogram **h_in, size_t bins )
+{
+    if (!h_in || *h_in)
+        return 1;
 
+    histogram *h_out = (histogram*)malloc( sizeof(histogram) );
+    h_out->red   = (uint32_t*)calloc( bins, sizeof(uint32_t) );
+    h_out->green = (uint32_t*)calloc( bins, sizeof(uint32_t) );
+    h_out->blue  = (uint32_t*)calloc( bins, sizeof(uint32_t) );
+    memset( h_out->red,   0, bins*sizeof(uint32_t) );
+    memset( h_out->green, 0, bins*sizeof(uint32_t) );
+    memset( h_out->blue,  0, bins*sizeof(uint32_t) );
+
+    h_out->max.red   = 0;
+    h_out->max.green = 0;
+    h_out->max.blue  = 0;
+    h_out->bins = bins;
+
+    *h_in = h_out;
+}
 /*
  * vim: sw=4:ts=4:
 */
