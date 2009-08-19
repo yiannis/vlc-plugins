@@ -47,6 +47,7 @@ static picture_t *Filter( filter_t *, picture_t * );
 
 static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
 static picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr );
+static void save_ppm( picture_t *p_bgr, const char *file );
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -103,7 +104,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         return NULL;
     }
 
-    printf("Hello: Histogram plugin!\r");
+    printf("Hello: Histogram plugin!\r"); fflush(stdout);
 
     return CopyInfoAndRelease( p_outpic, p_pic );
 }
@@ -150,6 +151,34 @@ picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr )
     picture_Release(p_bgr);
     return p_out;
 }
+
+void save_ppm( picture_t *p_bgr, const char *file )
+{
+    if (p_bgr->format.i_chroma != VLC_CODEC_RGB24)
+        return;
+
+    int width = p_bgr->format.i_width,
+        height = p_bgr->format.i_height,
+        size = width*height,
+        length = size*3;
+    uint8_t *data = p_bgr->p_data, *data_end = data+length;
+    uint8_t *data_tmp = malloc(length);
+    uint8_t *aux = data, *aux_tmp = data_tmp;
+    while (aux != data_end) {
+        aux_tmp[0] = aux[2];
+        aux_tmp[1] = aux[1];
+        aux_tmp[2] = aux[0];
+        aux+=3; aux_tmp+=3;
+    }
+
+    FILE* out = fopen( file, "w" );
+    fprintf( out, "P6\n# CREATOR: John\n%d %d\n255\n", width, height );
+    fwrite( (void*)data_tmp, 3, size, out );
+    fclose( out );
+
+    free( data_tmp );
+}
+
 
 /*
  * vim: sw=4:ts=4:
