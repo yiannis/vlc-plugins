@@ -48,6 +48,7 @@ static picture_t *Filter( filter_t *, picture_t * );
 static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
 static picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr );
 static void save_ppm( picture_t *p_bgr, const char *file );
+static int xy2l(int x, int y, int c, int w, int h);
 
 typedef struct {
     struct max_ {
@@ -59,8 +60,10 @@ typedef struct {
 } histogram;
 static int histogram_init( histogram **h_in, size_t bins );
 static int histogram_fill( histogram *h, const picture_t *p_bgr );
+static int histogram_update_max( histogram *h );
 static int histogram_delete( histogram **h );
 static int histogram_normalize( histogram *h, uint32_t height );
+static int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 );
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -114,10 +117,13 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
     const int max_value = 255; ///< Should be calculated from image bpc
     const int hh = 30; ///< histogram height in pixels
+    const int x0 = 50, y0 = 50;
     histogram *histo = NULL;
     histogram_init( &histo, max_value+1 ); // Number of bins is 0-max_value
     histogram_fill( histo, p_bgr );
     histogram_normalize( histo, hh );
+    histogram_paint( histo, p_bgr, x0, y0 );
+    save_ppm( p_bgr, "out.ppm" );
 
     histogram_delete( &histo );
     picture_Release( p_bgr );
@@ -130,7 +136,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         return NULL;
     }
 
-    printf("Hello: Histogram plugin!\r"); fflush(stdout);
+    //printf("Hello: Histogram plugin!\r"); fflush(stdout);
 
     return CopyInfoAndRelease( p_outpic, p_pic );
 }
@@ -243,8 +249,18 @@ int histogram_fill( histogram *h, const picture_t *p_bgr )
        data+=3;
     }
 
+    histogram_update_max( h );
+
+    return 0;
+}
+
+int histogram_update_max( histogram *h )
+{
+    if (!h)
+        return 1;
+
     // Get maximum bin value for each color
-    for (uint32_t i=0; i<h->bins; i++) {
+    for (uint32_t i=0; i < h->bins; i++) {
        if (h->blue [i] > h->max.blue)  h->max.blue  = h->blue[i];
        if (h->green[i] > h->max.green) h->max.green = h->green[i];
        if (h->red  [i] > h->max.red)   h->max.red   = h->red[i];
@@ -269,19 +285,66 @@ int histogram_delete( histogram **h )
 
 int histogram_normalize( histogram *h, uint32_t height )
 {
-    if (!h)
-        return 1;
+    //if (!h)
+      //  return 1;
 
     for (uint32_t i = 0; i < h->bins; i++) {
        h->red  [i] = (h->red  [i]*(height-1))/h->max.red;
        h->green[i] = (h->green[i]*(height-1))/h->max.green;
        h->blue [i] = (h->blue [i]*(height-1))/h->max.blue;
     }
+    h->max.red   = 0;
+    h->max.green = 0;
+    h->max.blue  = 0;
+
+    histogram_update_max( h );
 
     return 0;
 }
 
+int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 )
+{
+    const uint8_t max_value = 255;
+    int width = p_bgr->format.i_width,
+        height = p_bgr->format.i_height;
+    uint8_t * const data = p_bgr->p_data;
 
+    for (uint32_t bin=0; bin < h->bins; bin++) {
+       int x = x0+bin;
+       for (uint32_t j=0; j<h->red[bin]; j++) {
+          int y = y0+j;
+          int index = xy2l(x,y,2,width,height);
+          data[index] = max_value;
+          data[index-1] = 0;
+          data[index-2] = 0;
+       }
+       for (uint32_t j=0; j<h->green[bin]; j++) {
+          int y = y0+j+h->max.red+10;
+          int index = xy2l(x,y,1,width,height);
+          data[index] = max_value;
+          data[index-1] = 0;
+          data[index+1] = 0;
+       }
+       for (uint32_t j=0; j<h->blue[bin]; j++) {
+          int y = y0+j+h->max.red+10+h->max.green+10;
+          int index = xy2l(x,y,0,width,height);
+          data[index] = max_value;
+          data[index+1] = 0;
+          data[index+2] = 0;
+       }
+    }
+
+}
+
+int xy2l(int x, int y, int c, int w, int h)
+{
+   if (x>=w || y>=h) {
+      printf("[%d,%d,%d]->%d {%dx%dx3=%d}\n",x,y,c,(h-y-1)*w*3+x*3+c,w,h,w*h*3);
+      fflush(stdout);
+      return 0;
+   } else
+      return (h-y-1)*w*3+x*3+c;
+}
 
 /*
  * vim: sw=4:ts=4:
