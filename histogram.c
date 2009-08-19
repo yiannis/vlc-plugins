@@ -58,6 +58,9 @@ typedef struct {
     size_t bins;
 } histogram;
 static int histogram_init( histogram **h_in, size_t bins );
+static int histogram_fill( histogram *h, const picture_t *p_bgr );
+static int histogram_delete( histogram **h );
+static int histogram_normalize( histogram *h, uint32_t height );
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -109,10 +112,14 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     picture_t *p_bgr = Input2BGR( p_filter, p_pic );
     save_ppm( p_bgr, "out.ppm" );
 
-    const int max_value = 255;
+    const int max_value = 255; ///< Should be calculated from image bpc
+    const int hh = 30; ///< histogram height in pixels
     histogram *histo = NULL;
     histogram_init( &histo, max_value+1 ); // Number of bins is 0-max_value
+    histogram_fill( histo, p_bgr );
+    histogram_normalize( histo, hh );
 
+    histogram_delete( &histo );
     picture_Release( p_bgr );
 
     picture_t *p_outpic = NULL;
@@ -219,6 +226,61 @@ int histogram_init( histogram **h_in, size_t bins )
     *h_in = h_out;
     return 0;
 }
+
+int histogram_fill( histogram *h, const picture_t *p_bgr )
+{
+    if (!h)
+        return 1;
+
+    size_t length = p_bgr->format.i_width*p_bgr->format.i_height*3;
+    uint8_t *data = p_bgr->p_data, *data_end = data+length;
+
+    // Fill histogram
+    while (data != data_end) {
+       h->blue [data[0]]++;
+       h->green[data[1]]++;
+       h->red  [data[2]]++;
+       data+=3;
+    }
+
+    // Get maximum bin value for each color
+    for (uint32_t i=0; i<h->bins; i++) {
+       if (h->blue [i] > h->max.blue)  h->max.blue  = h->blue[i];
+       if (h->green[i] > h->max.green) h->max.green = h->green[i];
+       if (h->red  [i] > h->max.red)   h->max.red   = h->red[i];
+    }
+
+    return 0;
+}
+
+int histogram_delete( histogram **h )
+{
+    if (!h || !*h)
+        return 1;
+
+    free( (*h)->red );
+    free( (*h)->green );
+    free( (*h)->blue );
+    free( *h );
+    *h = NULL;
+
+    return 0;
+}
+
+int histogram_normalize( histogram *h, uint32_t height )
+{
+    if (!h)
+        return 1;
+
+    for (uint32_t i = 0; i < h->bins; i++) {
+       h->red  [i] = (h->red  [i]*(height-1))/h->max.red;
+       h->green[i] = (h->green[i]*(height-1))/h->max.green;
+       h->blue [i] = (h->blue [i]*(height-1))/h->max.blue;
+    }
+
+    return 0;
+}
+
 
 
 /*
