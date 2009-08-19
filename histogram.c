@@ -49,6 +49,7 @@ static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
 static picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr );
 static void save_ppm( picture_t *p_bgr, const char *file );
 static int xy2l(int x, int y, int c, int w, int h);
+static void dump_format( video_format_t *fmt );
 
 typedef struct {
     struct max_ {
@@ -126,17 +127,13 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     save_ppm( p_bgr, "out.ppm" );
 
     histogram_delete( &histo );
-    picture_Release( p_bgr );
 
-    picture_t *p_outpic = NULL;
-    p_outpic = filter_NewPicture( p_filter );
+    picture_t *p_outpic = BGR2OutputAndRelease( p_filter, p_bgr );
     if( !p_outpic )
     {
         picture_Release( p_pic );
         return NULL;
     }
-
-    //printf("Hello: Histogram plugin!\r"); fflush(stdout);
 
     return CopyInfoAndRelease( p_outpic, p_pic );
 }
@@ -164,21 +161,20 @@ picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic )
 
 picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr )
 {
-    if (p_filter->fmt_out.video.i_chroma == VLC_CODEC_RGB24)
+    if (p_filter->fmt_out.video.i_chroma == VLC_CODEC_RGB24) {
+        printf("Image is already BGR\n");
         return p_bgr;
+    }
 
     video_format_t fmt_out;
-    video_format_t fmt_bgr;
     video_format_Copy( &fmt_out, &p_filter->fmt_out.video );
-    video_format_Init( &fmt_bgr, VLC_CODEC_RGB24 );
 
     image_handler_t *img_handler = image_HandlerCreate( p_filter );
 
-    picture_t *p_out = image_Convert( img_handler, p_bgr, &fmt_bgr , &fmt_out );
+    picture_t *p_out = image_Convert( img_handler, p_bgr, &p_bgr->format, &fmt_out );
 
     /*Cleanup*/
     video_format_Clean( &fmt_out );
-    video_format_Clean( &fmt_bgr );
     image_HandlerDelete( img_handler );
     picture_Release( p_bgr );
     return p_out;
@@ -307,7 +303,7 @@ int histogram_normalize( histogram *h, uint32_t height )
 int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 )
 {
     const uint8_t max_value = 255;
-    const uint8_t floor = 50;
+    const uint8_t floor = 100;
     int width = p_bgr->format.i_width,
         height = p_bgr->format.i_height;
     uint8_t * const data = p_bgr->p_data;
@@ -364,6 +360,7 @@ int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 )
        }
     }
 
+    return 0;
 }
 
 int xy2l(int x, int y, int c, int w, int h)
@@ -374,6 +371,20 @@ int xy2l(int x, int y, int c, int w, int h)
       return 0;
    } else
       return (h-y-1)*w*3+x*3+c;
+}
+
+void dump_format( video_format_t *fmt )
+{
+    if (!fmt) {
+        printf("This video_format_t is NULL.\n");
+        return;
+    }
+
+    printf("%dx%d@%dbpp [%d]\n",
+           fmt->i_width,
+           fmt->i_height,
+           fmt->i_bits_per_pixel,
+           fmt->i_chroma);
 }
 
 /*
