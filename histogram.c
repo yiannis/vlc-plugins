@@ -76,7 +76,7 @@ static inline int histogram_fill( histogram *h, const picture_t *p_bgr );
 static inline int histogram_update_max( histogram *h );
 static inline int histogram_delete( histogram **h );
 static inline int histogram_normalize( histogram *h, uint32_t height );
-static inline int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 );
+static inline int histogram_paint( histogram *h, filter_t *p_filter, picture_t *p_bgr );
 
 #define PDUMP( pic ) dump_picture( pic, #pic );
 /*****************************************************************************
@@ -145,7 +145,6 @@ static void Destroy( vlc_object_t *p_this )
  *****************************************************************************/
 static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
-    printf("Hello! I'm the histogram plugin!\n");
     if( !p_pic ) return NULL;
 
     picture_t *p_bgr = Input2BGR( p_filter, p_pic );
@@ -155,7 +154,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     histogram_init( &histo, max_value+1 ); // Number of bins is 0-max_value
     histogram_fill( histo, p_bgr );
     histogram_normalize( histo, p_filter->p_sys->hh );
-    histogram_paint( histo, p_bgr, p_filter->p_sys->x0, p_filter->p_sys->y0 );
+    histogram_paint( histo, p_filter, p_bgr );
 
     histogram_delete( &histo );
 
@@ -341,8 +340,11 @@ int histogram_normalize( histogram *h, uint32_t height )
     return 0;
 }
 
-int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 )
+int histogram_paint( histogram *h, filter_t *p_filter, picture_t *p_bgr )
 {
+    int x0 = p_filter->p_sys->x0,
+        y0 = p_filter->p_sys->y0,
+        hh = p_filter->p_sys->hh;
     const uint8_t max_value = 255;
     const uint8_t floor = 100;
     int width = p_bgr->format.i_width,
@@ -373,7 +375,7 @@ int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 )
        data[index+2] = 10;
        // Paint green histo
        for (uint32_t j=0; j <= h->green[bin]; j++) {
-          int y = y0+j+h->max.red+10;
+          int y = y0+j+hh+10;
           int index = xy2l(x,y,1,width,height);
           data[index] = max_value;
           if (data[index-1] > floor) data[index-1] -= floor; else data[index-1] = 0;
@@ -381,20 +383,20 @@ int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 )
        }
        // Drop shadow [green]
        for (uint32_t j=h->green[bin+1]; j<h->green[bin]; j++) {
-          int y = y0+j+h->max.red+10;
+          int y = y0+j+hh+10;
           int index = xy2l(x+1,y,0,width,height);
           data[index] = 10;
           data[index+1] = 10;
           data[index+2] = 10;
        }
-       y += h->max.red+10;
+       y += hh+10;
        index = xy2l(x,y,0,width,height);
        data[index] = 10;
        data[index+1] = 10;
        data[index+2] = 10;
        // Paint blue histo
        for (uint32_t j=0; j <= h->blue[bin]; j++) {
-          int y = y0+j+h->max.red+10+h->max.green+10;
+          int y = y0+j+hh+10+hh+10;
           int index = xy2l(x,y,0,width,height);
           data[index] = max_value;
           if (data[index+1] > floor) data[index+1] -= floor; else data[index+1] = 0;
@@ -402,13 +404,13 @@ int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 )
        }
        // Drop shadow [blue]
        for (uint32_t j=h->blue[bin+1]; j<h->blue[bin]; j++) {
-          int y = y0+j+h->max.red+10+h->max.green+10;
+          int y = y0+j+hh+10+hh+10;
           int index = xy2l(x+1,y,0,width,height);
           data[index] = 10;
           data[index+1] = 10;
           data[index+2] = 10;
        }
-       y += h->max.green+10;
+       y += hh+10;
        index = xy2l(x,y,0,width,height);
        data[index] = 10;
        data[index+1] = 10;
