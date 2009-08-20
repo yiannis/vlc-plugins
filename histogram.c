@@ -21,6 +21,15 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
+/* \todo {
+ * Logarithmic scale
+ * Add vlc options for:
+ *  x0,y0
+ *  transparency
+ *  hh
+ *  }
+ */
+
 /*****************************************************************************
  * Preamble
  *****************************************************************************/
@@ -59,12 +68,12 @@ typedef struct {
     struct max_ max;
     size_t bins;
 } histogram;
-static int histogram_init( histogram **h_in, size_t bins );
-static int histogram_fill( histogram *h, const picture_t *p_bgr );
-static int histogram_update_max( histogram *h );
-static int histogram_delete( histogram **h );
-static int histogram_normalize( histogram *h, uint32_t height );
-static int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 );
+static inline int histogram_init( histogram **h_in, size_t bins );
+static inline int histogram_fill( histogram *h, const picture_t *p_bgr );
+static inline int histogram_update_max( histogram *h );
+static inline int histogram_delete( histogram **h );
+static inline int histogram_normalize( histogram *h, uint32_t height );
+static inline int histogram_paint( histogram *h, picture_t *p_bgr, int x0, int y0 );
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
