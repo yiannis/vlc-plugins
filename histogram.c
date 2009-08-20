@@ -55,7 +55,7 @@ static void Destroy     ( vlc_object_t * );
 static picture_t *Filter( filter_t *, picture_t * );
 
 static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
-static picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr );
+static picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr );
 static void save_ppm( picture_t *p_bgr, const char *file );
 static inline int xy2l(int x, int y, int c, int w, int h);
 static void dump_format( video_format_t *fmt );
@@ -139,7 +139,8 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
     histogram_delete( &histo );
 
-    picture_t *p_outpic = BGR2OutputAndRelease( p_filter, p_bgr );
+    picture_t *p_outpic = BGR2Output( p_filter, p_bgr );
+    picture_Release( p_bgr );
 
     if( !p_outpic )
     {
@@ -171,7 +172,7 @@ picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic )
     return p_bgr;
 }
 
-picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr )
+picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr )
 {
     if (p_filter->fmt_out.video.i_chroma == VLC_CODEC_RGB24) {
         printf("Image is already BGR\n");
@@ -187,7 +188,6 @@ picture_t* BGR2OutputAndRelease( filter_t *p_filter, picture_t *p_bgr )
 
     /*Cleanup*/
     image_HandlerDelete( img_handler );
-    picture_Release( p_bgr );
     return p_out;
 }
 
