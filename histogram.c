@@ -93,6 +93,18 @@ vlc_module_begin ()
 vlc_module_end ()
 
 /*****************************************************************************
+ * filter_sys_t: Histogram video output method descriptor
+ *****************************************************************************
+ * This structure is part of the video output thread descriptor.
+ * It describes the Histogram specific properties of an output thread.
+ *****************************************************************************/
+struct filter_sys_t
+{
+    int hh; ///< histogram height in pixels
+    int x0, y0; ///< histogram bottom, left corner
+};
+
+/*****************************************************************************
  * Create: allocates Histogram video thread output method
  *****************************************************************************
  * This function allocates and initializes a Invert vout method.
@@ -101,7 +113,15 @@ static int Create( vlc_object_t *p_this )
 {
     filter_t *p_filter = (filter_t *)p_this;
 
+    p_filter->p_sys = malloc( sizeof( filter_sys_t ) );
+    if( p_filter->p_sys == NULL )
+        return VLC_ENOMEM;
+
     p_filter->pf_video_filter = Filter;
+
+    p_filter->p_sys->hh = 50;
+    p_filter->p_sys->x0 = 50;
+    p_filter->p_sys->y0 = 50;
 
     return VLC_SUCCESS;
 }
@@ -131,13 +151,11 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     picture_t *p_bgr = Input2BGR( p_filter, p_pic );
 
     const int max_value = 255; ///< Should be calculated from image bpc
-    const int hh = 50; ///< histogram height in pixels
-    const int x0 = 50, y0 = 50;
     histogram *histo = NULL;
     histogram_init( &histo, max_value+1 ); // Number of bins is 0-max_value
     histogram_fill( histo, p_bgr );
-    histogram_normalize( histo, hh );
-    histogram_paint( histo, p_bgr, x0, y0 );
+    histogram_normalize( histo, p_filter->p_sys->hh );
+    histogram_paint( histo, p_bgr, p_filter->p_sys->x0, p_filter->p_sys->y0 );
 
     histogram_delete( &histo );
 
