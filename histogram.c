@@ -22,11 +22,12 @@
  *****************************************************************************/
 
 /* \todo {
- * Logarithmic scale
- * Add vlc options for:
- *  x0,y0
- *  transparency
- *  hh
+ * + Logarithmic scale
+ * + Add vlc options for:
+ *   - x0,y0
+ *   - transparency
+ *   - hh
+ * + Handle histogram does not fit in image case
  *  }
  */
 
@@ -68,6 +69,7 @@ typedef struct {
     uint32_t *red, *green, *blue;
     struct max_ max;
     size_t bins;
+    int equalize;
 } histogram;
 static inline int histogram_init( histogram **h_in, size_t bins );
 static inline int histogram_fill( histogram *h, const picture_t *p_bgr );
@@ -139,14 +141,17 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
     histogram_delete( &histo );
 
-    picture_t *p_outpic = BGR2Output( p_filter, p_bgr );
+    picture_t *p_yuv = BGR2Output( p_filter, p_bgr );
     picture_Release( p_bgr );
 
+    picture_t *p_outpic = filter_NewPicture( p_filter );
     if( !p_outpic )
     {
         picture_Release( p_pic );
         return NULL;
     }
+    picture_CopyPixels( p_outpic, p_yuv );
+    picture_Release( p_yuv );
 
     return CopyInfoAndRelease( p_outpic, p_pic );
 }
@@ -237,6 +242,7 @@ int histogram_init( histogram **h_in, size_t bins )
     h_out->max.green = 0;
     h_out->max.blue  = 0;
     h_out->bins = bins;
+    h_out->equalize = 1;
 
     *h_in = h_out;
     return 0;
@@ -296,6 +302,12 @@ int histogram_normalize( histogram *h, uint32_t height )
 {
     if (!h)
         return 1;
+
+    if (h->equalize) {
+        uint32_t max = h->max.red > h->max.green ? h->max.red : h->max.green;
+        max = max > h->max.blue ? max : h->max.blue;
+        h->max.red = h->max.green = h->max.blue = max;
+    }
 
     for (uint32_t i = 0; i < h->bins; i++) {
        h->red  [i] = (h->red  [i]*(height-1))/h->max.red;
