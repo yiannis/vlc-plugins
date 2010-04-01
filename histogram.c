@@ -43,6 +43,7 @@
 #include <vlc_plugin.h>
 
 #include <vlc_image.h>
+#include <vlc_keys.h>
 
 #include <vlc_filter.h>
 #include "filter_picture.h"
@@ -78,6 +79,9 @@ static inline int histogram_delete( histogram **h );
 static inline int histogram_normalize( histogram *h, uint32_t height );
 static inline int histogram_paint( histogram *h, filter_t *p_filter, picture_t *p_bgr );
 
+static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
+                     vlc_value_t oldval, vlc_value_t newval, void *p_data );
+
 #define PDUMP( pic ) dump_picture( pic, #pic );
 /*****************************************************************************
  * Module descriptor
@@ -100,8 +104,12 @@ vlc_module_end ()
  *****************************************************************************/
 struct filter_sys_t
 {
-    int hh; ///< histogram height in pixels
-    int x0, y0; ///< histogram bottom, left corner
+    int hh;                     ///< histogram height in pixels
+    int x0, y0;                 ///< histogram bottom, left corner
+    bool log;                   ///< Weather to use a logarithmic scale
+    bool draw;                  ///< Weather to draw the histogram
+    vout_thread_t *p_vout;      ///< Pointer to video-out thread
+    vlc_mutex_t lock;           ///< To lock for read/write on picture
 };
 
 /*****************************************************************************
@@ -119,9 +127,20 @@ static int Create( vlc_object_t *p_this )
 
     p_filter->pf_video_filter = Filter;
 
+    /*histogram related values*/
     p_filter->p_sys->hh = 50;
     p_filter->p_sys->x0 = 50;
     p_filter->p_sys->y0 = 50;
+    p_filter->p_sys->draw = true;
+    p_filter->p_sys->log = false;
+
+    /*create mutex*/
+    vlc_mutex_init( &p_filter->p_sys->lock );
+
+    /*add key-pressed callback*/
+    p_filter->p_sys->p_vout = vlc_object_find( p_this, VLC_OBJECT_VOUT, FIND_PARENT );
+    if(p_filter->p_sys->p_vout)
+        var_AddCallback( p_filter->p_sys->p_vout->p_libvlc, "key-pressed", KeyEvent, p_this );
 
     return VLC_SUCCESS;
 }
@@ -133,7 +152,21 @@ static int Create( vlc_object_t *p_this )
  *****************************************************************************/
 static void Destroy( vlc_object_t *p_this )
 {
-    (void)p_this;
+    filter_t *p_filter = (filter_t*)p_this;
+
+    /*destroy mutex*/
+    vlc_mutex_destroy( &p_filter->p_sys->lock );
+
+    /*remove key-pressed callback*/
+    if(p_filter->p_sys->p_vout)
+    {
+        var_DelCallback( p_filter->p_sys->p_vout->p_libvlc, "key-pressed",
+                         KeyEvent, p_this );
+
+        vlc_object_release( p_filter->p_sys->p_vout );
+    }
+
+
 }
 
 /*****************************************************************************
@@ -146,6 +179,11 @@ static void Destroy( vlc_object_t *p_this )
 static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
     if( !p_pic ) return NULL;
+
+    filter_sys_t *p_sys = p_filter->p_sys;
+
+    if (!p_sys->draw)
+        return p_pic;
 
     picture_t *p_bgr = Input2BGR( p_filter, p_pic );
 
@@ -171,6 +209,50 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     picture_Release( p_yuv );
 
     return CopyInfoAndRelease( p_outpic, p_pic );
+}
+
+/*****************************************************************************
+ * KeyEvent: callback for keyboard events
+ *****************************************************************************/
+static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
+                     vlc_value_t oldval, vlc_value_t newval, void *p_data )
+{
+    VLC_UNUSED(psz_var); VLC_UNUSED(oldval);
+
+    filter_t *p_filter = (filter_t *)p_data;
+    filter_sys_t *p_sys = p_filter->p_sys;
+
+    msg_Dbg( p_this, "key pressed (%d) ", newval.i_int );
+
+    if ( !newval.i_int )
+    {
+        msg_Err( p_this, "Received invalid key event %d", newval.i_int );
+        return VLC_EGENERIC;
+    }
+
+    vlc_mutex_lock( &p_sys->lock );
+
+    uint32_t i_key32 = newval.i_int;
+
+    /* first key-down for modifier-keys */
+    switch (i_key32) {
+        case KEY_HOME:
+            p_sys->draw = true;
+            break;
+        case KEY_DELETE:
+            p_sys->draw = false;
+            break;
+        case KEY_PAGEUP:
+            p_sys->log = true;
+            break;
+        case KEY_PAGEDOWN:
+            p_sys->log = false;
+            break;
+    }
+
+    vlc_mutex_unlock( &p_sys->lock );
+
+    return VLC_SUCCESS;
 }
 
 picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic )
