@@ -39,6 +39,8 @@
 # include "config.h"
 #endif
 
+#include <math.h>
+
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 
@@ -76,7 +78,7 @@ static inline int histogram_init( histogram **h_in, size_t bins );
 static inline int histogram_fill( histogram *h, const picture_t *p_bgr );
 static inline int histogram_update_max( histogram *h );
 static inline int histogram_delete( histogram **h );
-static inline int histogram_normalize( histogram *h, uint32_t height );
+static inline int histogram_normalize( histogram *h, uint32_t height, bool log );
 static inline int histogram_paint( histogram *h, filter_t *p_filter, picture_t *p_bgr );
 
 static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
@@ -189,9 +191,9 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
     const int max_value = 255; ///< Should be calculated from image bpc
     histogram *histo = NULL;
-    histogram_init( &histo, max_value+1 ); // Number of bins is 0-max_value
+    histogram_init( &histo, max_value+1 ); // Number of bins is 0<->max_value
     histogram_fill( histo, p_bgr );
-    histogram_normalize( histo, p_filter->p_sys->hh );
+    histogram_normalize( histo, p_filter->p_sys->hh, p_sys->log );
     histogram_paint( histo, p_filter, p_bgr );
 
     histogram_delete( &histo );
@@ -397,10 +399,16 @@ int histogram_delete( histogram **h )
     return 0;
 }
 
-int histogram_normalize( histogram *h, uint32_t height )
+int histogram_normalize( histogram *h, uint32_t height, bool log )
 {
     if (!h)
         return 1;
+
+    if (log) {
+        h->max.red   = logf(h->max.red)*100;
+        h->max.green = logf(h->max.green)*100;
+        h->max.blue  = logf(h->max.blue)*100;
+    }
 
     if (h->equalize) {
         uint32_t max = h->max.red > h->max.green ? h->max.red : h->max.green;
@@ -408,11 +416,20 @@ int histogram_normalize( histogram *h, uint32_t height )
         h->max.red = h->max.green = h->max.blue = max;
     }
 
-    for (uint32_t i = 0; i < h->bins; i++) {
-       h->red  [i] = (h->red  [i]*(height-1))/h->max.red;
-       h->green[i] = (h->green[i]*(height-1))/h->max.green;
-       h->blue [i] = (h->blue [i]*(height-1))/h->max.blue;
+    if (log) {
+       for (uint32_t i = 0; i < h->bins; i++) {
+          h->red  [i] = (logf(h->red  [i])*100*(height-1))/h->max.red;
+          h->green[i] = (logf(h->green[i])*100*(height-1))/h->max.green;
+          h->blue [i] = (logf(h->blue [i])*100*(height-1))/h->max.blue;
+       }
+    } else {
+       for (uint32_t i = 0; i < h->bins; i++) {
+          h->red  [i] = (h->red  [i]*(height-1))/h->max.red;
+          h->green[i] = (h->green[i]*(height-1))/h->max.green;
+          h->blue [i] = (h->blue [i]*(height-1))/h->max.blue;
+       }
     }
+
     h->max.red   = 0;
     h->max.green = 0;
     h->max.blue  = 0;
