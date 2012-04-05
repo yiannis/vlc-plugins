@@ -22,12 +22,12 @@
  *****************************************************************************/
 
 /* \todo {
- * + Logarithmic scale
  * + Add vlc options for:
  *   - x0,y0
  *   - transparency
  *   - hh
  * + Handle histogram does not fit in image case
+ * + Y-only histogram
  *  }
  */
 
@@ -43,18 +43,18 @@
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
+#include <vlc_variables.h>
 
 #include <vlc_image.h>
 #include <vlc_keys.h>
 
 #include <vlc_filter.h>
-#include "filter_picture.h"
 
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-static int  Create      ( vlc_object_t * );
-static void Destroy     ( vlc_object_t * );
+static int  Open      ( vlc_object_t * );
+static void Close     ( vlc_object_t * );
 
 static picture_t *Filter( filter_t *, picture_t * );
 
@@ -63,7 +63,9 @@ static picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr );
 static void save_ppm( picture_t *p_bgr, const char *file );
 static inline int xy2l(int x, int y, int c, int w, int h);
 static void dump_format( video_format_t *fmt );
+#if 0
 static void dump_picture( picture_t *p_pic, const char *name );
+#endif
 
 typedef struct {
     struct max_ {
@@ -90,12 +92,12 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
  *****************************************************************************/
 vlc_module_begin ()
     set_description( N_("Histogram video filter") )
-    set_shortname( N_("Embeds RGB histogram" ))
+    set_shortname( N_("Embeds RGB histogram") )
     set_category( CAT_VIDEO )
     set_subcategory( SUBCAT_VIDEO_VFILTER )
     set_capability( "video filter2", 0 )
     add_shortcut( "histogram" )
-    set_callbacks( Create, Destroy )
+    set_callbacks( Open, Close )
 vlc_module_end ()
 
 /*****************************************************************************
@@ -115,11 +117,11 @@ struct filter_sys_t
 };
 
 /*****************************************************************************
- * Create: allocates Histogram video thread output method
+ * Open: allocates Histogram video thread output method
  *****************************************************************************
  * This function allocates and initializes a Invert vout method.
  *****************************************************************************/
-static int Create( vlc_object_t *p_this )
+static int Open( vlc_object_t *p_this )
 {
     filter_t *p_filter = (filter_t *)p_this;
 
@@ -140,19 +142,17 @@ static int Create( vlc_object_t *p_this )
     vlc_mutex_init( &p_filter->p_sys->lock );
 
     /*add key-pressed callback*/
-    p_filter->p_sys->p_vout = vlc_object_find( p_this, VLC_OBJECT_VOUT, FIND_PARENT );
-    if(p_filter->p_sys->p_vout)
-        var_AddCallback( p_filter->p_sys->p_vout->p_libvlc, "key-pressed", KeyEvent, p_this );
+    var_AddCallback( p_filter->p_libvlc, "key-pressed", KeyEvent, p_this );
 
     return VLC_SUCCESS;
 }
 
 /*****************************************************************************
- * Destroy: destroy Invert video thread output method
+ * Close: destroy Invert video thread output method
  *****************************************************************************
- * Terminate an output method created by InvertCreateOutputMethod
+ * Terminate an output method created by InvertOpenOutputMethod
  *****************************************************************************/
-static void Destroy( vlc_object_t *p_this )
+static void Close( vlc_object_t *p_this )
 {
     filter_t *p_filter = (filter_t*)p_this;
 
@@ -160,23 +160,17 @@ static void Destroy( vlc_object_t *p_this )
     vlc_mutex_destroy( &p_filter->p_sys->lock );
 
     /*remove key-pressed callback*/
-    if(p_filter->p_sys->p_vout)
+    if(p_filter->p_libvlc)
     {
-        var_DelCallback( p_filter->p_sys->p_vout->p_libvlc, "key-pressed",
-                         KeyEvent, p_this );
-
-        vlc_object_release( p_filter->p_sys->p_vout );
+        var_DelCallback( p_filter->p_libvlc, "key-pressed", KeyEvent, p_this );
     }
 
-
+    /*free private data*/
+    free(p_filter->p_sys);
 }
 
 /*****************************************************************************
  * Render: displays previously rendered output
- *****************************************************************************
- * This function send the currently rendered image to Invert image, waits
- * until it is displayed and switch the two rendering buffers, preparing next
- * frame.
  *****************************************************************************/
 static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
@@ -193,7 +187,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     histogram *histo = NULL;
     histogram_init( &histo, max_value+1 ); // Number of bins is 0<->max_value
     histogram_fill( histo, p_bgr );
-    histogram_normalize( histo, p_filter->p_sys->hh, p_sys->log );
+    histogram_normalize( histo, p_sys->hh, p_sys->log );
     histogram_paint( histo, p_filter, p_bgr );
 
     histogram_delete( &histo );
@@ -210,7 +204,9 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     picture_CopyPixels( p_outpic, p_yuv );
     picture_Release( p_yuv );
 
-    return CopyInfoAndRelease( p_outpic, p_pic );
+    picture_CopyProperties( p_outpic, p_pic );
+    picture_Release( p_pic );
+    return p_outpic;
 }
 
 /*****************************************************************************
@@ -224,11 +220,11 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
     filter_t *p_filter = (filter_t *)p_data;
     filter_sys_t *p_sys = p_filter->p_sys;
 
-    msg_Dbg( p_this, "key pressed (%d) ", newval.i_int );
+    msg_Dbg( p_this, "key pressed (%d) ", (int)newval.i_int );
 
     if ( !newval.i_int )
     {
-        msg_Err( p_this, "Received invalid key event %d", newval.i_int );
+        msg_Err( p_this, "Received invalid key event %d", (int)newval.i_int );
         return VLC_EGENERIC;
     }
 
@@ -306,7 +302,7 @@ void save_ppm( picture_t *p_bgr, const char *file )
         height = p_bgr->format.i_height,
         size = width*height,
         length = size*3;
-    uint8_t *data = p_bgr->p_data, *data_end = data+length;
+    uint8_t *data = p_bgr->p_data_orig, *data_end = data+length;
     uint8_t *data_tmp = malloc(length);
     uint8_t *aux = data, *aux_tmp = data_tmp;
     while (aux != data_end) {
@@ -355,7 +351,7 @@ int histogram_fill( histogram *h, const picture_t *p_bgr )
         return 1;
 
     size_t length = p_bgr->format.i_width*p_bgr->format.i_height*3;
-    uint8_t *data = p_bgr->p_data, *data_end = data+length;
+    uint8_t *data = p_bgr->p_data_orig, *data_end = data+length;
 
     // Fill histogram
     while (data != data_end) {
@@ -446,9 +442,9 @@ int histogram_paint( histogram *h, filter_t *p_filter, picture_t *p_bgr )
         hh = p_filter->p_sys->hh;
     const uint8_t max_value = 255;
     const uint8_t floor = 100;
-    int width = p_bgr->format.i_width,
-        height = p_bgr->format.i_height;
-    uint8_t * const data = p_bgr->p_data;
+    int width = p_bgr->p[0].i_pitch / 3,
+        height = p_bgr->p[0].i_visible_lines;
+    uint8_t * const data = p_bgr->p[0].p_pixels;
 
     for (uint32_t bin=0; bin < h->bins-1; bin++) {
        int x = x0+bin;
@@ -543,6 +539,7 @@ void dump_format( video_format_t *fmt )
            fmt->i_chroma);
 }
 
+#if 0
 void dump_picture( picture_t *p_pic, const char *name )
 {
     printf("%s {\n",name);
@@ -552,7 +549,7 @@ void dump_picture( picture_t *p_pic, const char *name )
            p_pic->format.i_bits_per_pixel,
            p_pic->format.i_chroma);
     printf("  p_data->%p [%p], refcount=%d release=%p\n",
-            p_pic->p_data,
+            p_pic->p_data_orig,
             p_pic->p_data_orig,
             p_pic->i_refcount,
             p_pic->pf_release);
@@ -561,6 +558,7 @@ void dump_picture( picture_t *p_pic, const char *name )
     printf("  p[2]->(%d,%d):%p ", p_pic->p[2].i_pitch, p_pic->p[2].i_lines, p_pic->p[2].p_pixels);
     printf("\n} %s\n\n",name);
 }
+#endif
 
 /*
  * vim: sw=4:ts=4:
