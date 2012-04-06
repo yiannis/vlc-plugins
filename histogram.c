@@ -4,7 +4,7 @@
  * Copyright (C) 2000-2006 the VideoLAN team
  * $Id$
  *
- * Authors: Yiannis Belias <jonnyb@hol.gr>
+ * Authors: Yiannis Belias <yiannisbe@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@
  *   - hh
  * + Handle histogram does not fit in image case
  * + Y-only histogram
+ * + Visual indication that equalization is on
  *  }
  */
 
@@ -119,7 +120,7 @@ struct filter_sys_t
 /*****************************************************************************
  * Open: allocates Histogram video thread output method
  *****************************************************************************
- * This function allocates and initializes a Invert vout method.
+ * This function allocates and initializes all necessary stuff.
  *****************************************************************************/
 static int Open( vlc_object_t *p_this )
 {
@@ -151,7 +152,7 @@ static int Open( vlc_object_t *p_this )
 /*****************************************************************************
  * Close: destroy Invert video thread output method
  *****************************************************************************
- * Terminate an output method created by InvertOpenOutputMethod
+ * Free all resources allocate by Open().
  *****************************************************************************/
 static void Close( vlc_object_t *p_this )
 {
