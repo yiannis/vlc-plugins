@@ -72,7 +72,7 @@ typedef struct {
         uint32_t red, green, blue;
     };
     uint32_t *red, *green, *blue;
-    struct max_ max;
+    struct max_ max; //FIXME
     size_t bins;
     int equalize;
 } histogram;
@@ -298,26 +298,29 @@ void save_ppm( picture_t *p_bgr, const char *file )
     if (p_bgr->format.i_chroma != VLC_CODEC_RGB24)
         return;
 
-    int width = p_bgr->format.i_width,
-        height = p_bgr->format.i_height,
-        size = width*height,
-        length = size*3;
-    uint8_t *data = p_bgr->p_data_orig, *data_end = data+length;
-    uint8_t *data_tmp = malloc(length);
-    uint8_t *aux = data, *aux_tmp = data_tmp;
-    while (aux != data_end) {
-        aux_tmp[0] = aux[2];
-        aux_tmp[1] = aux[1];
-        aux_tmp[2] = aux[0];
-        aux+=3; aux_tmp+=3;
+    int width  = p_bgr->p[0].i_visible_pitch / 3, ///< image width in pixels
+        height = p_bgr->p[0].i_visible_lines,     ///< image height in pixels
+        pitch  = p_bgr->p[0].i_pitch,             ///< buffer line size in bytes
+        margin = pitch - 3*width;                 ///< margin at end of line
+    size_t size = 3*width*height;                 ///< image size in bytes
+
+    uint8_t *rgb_buf = malloc(size);
+    uint8_t *rgb_pel = rgb_buf, *bgr_pel = p_bgr->p[0].p_pixels;
+    for (int y=0; y<height; y++, bgr_pel+=margin) {
+        for (int x=0; x<width; x++, rgb_pel+=3, bgr_pel+=3) {
+            rgb_pel[0] = bgr_pel[2];
+            rgb_pel[1] = bgr_pel[1];
+            rgb_pel[2] = bgr_pel[0];
+        }
     }
 
+    printf("Saving frame as %s.\n", file);
     FILE* out = fopen( file, "w" );
-    fprintf( out, "P6\n# CREATOR: John\n%d %d\n255\n", width, height );
-    fwrite( (void*)data_tmp, 3, size, out );
+    fprintf( out, "P6\n# CREATOR: vlc-histogram\n%d %d\n255\n", width, height );
+    fwrite( (void*)rgb_buf, 1, size, out );
     fclose( out );
 
-    free( data_tmp );
+    free( rgb_buf );
 }
 
 int histogram_init( histogram **h_in, size_t bins )
@@ -350,8 +353,8 @@ int histogram_fill( histogram *h, const picture_t *p_bgr )
     if (!h)
         return 1;
 
-    const uint8_t const *start = p_bgr->p[0].p_pixels,
-                        *end = start + p_bgr->p[0].i_pitch*p_bgr->p[0].i_visible_lines;
+    uint8_t *start = p_bgr->p[0].p_pixels,
+            *end = start + p_bgr->p[0].i_pitch*p_bgr->p[0].i_visible_lines;
     for (uint8_t *line = start; line != end; line += p_bgr->p[0].i_pitch) {
         const uint8_t const *end_visible = line+p_bgr->p[0].i_visible_pitch;
         for (uint8_t *pel = line; pel != end_visible; pel+=3) {
