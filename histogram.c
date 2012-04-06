@@ -74,13 +74,12 @@ typedef struct {
     uint32_t *red, *green, *blue;
     struct max_ max; //FIXME
     size_t bins;
-    int equalize;
 } histogram;
 static inline int histogram_init( histogram **h_in, size_t bins );
 static inline int histogram_fill( histogram *h, const picture_t *p_bgr );
 static inline int histogram_update_max( histogram *h );
 static inline int histogram_delete( histogram **h );
-static inline int histogram_normalize( histogram *h, uint32_t height, bool log );
+static inline int histogram_normalize( histogram *h, uint32_t height, bool log, bool equalize );
 static inline int histogram_paint( histogram *h, filter_t *p_filter, picture_t *p_bgr );
 
 static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
@@ -110,6 +109,7 @@ struct filter_sys_t
 {
     int hh;                     ///< histogram height in pixels
     int x0, y0;                 ///< histogram bottom, left corner
+    bool equalize;              ///< equalize histogram channels
     bool log;                   ///< Weather to use a logarithmic scale
     bool draw;                  ///< Weather to draw the histogram
     vout_thread_t *p_vout;      ///< Pointer to video-out thread
@@ -137,6 +137,7 @@ static int Open( vlc_object_t *p_this )
     p_filter->p_sys->y0 = 50;
     p_filter->p_sys->draw = true;
     p_filter->p_sys->log = false;
+    p_filter->p_sys->equalize = false;
 
     /*create mutex*/
     vlc_mutex_init( &p_filter->p_sys->lock );
@@ -187,7 +188,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     histogram *histo = NULL;
     histogram_init( &histo, max_value+1 ); // Number of bins is 0<->max_value
     histogram_fill( histo, p_bgr );
-    histogram_normalize( histo, p_sys->hh, p_sys->log );
+    histogram_normalize( histo, p_sys->hh, p_sys->log, p_sys->equalize );
     histogram_paint( histo, p_filter, p_bgr );
 
     histogram_delete( &histo );
@@ -245,6 +246,9 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
             break;
         case KEY_PAGEDOWN:
             p_sys->log = false;
+            break;
+        case '/':
+            p_sys->equalize = !p_sys->equalize;
             break;
     }
 
@@ -342,7 +346,6 @@ int histogram_init( histogram **h_in, size_t bins )
     h_out->max.green = 0;
     h_out->max.blue  = 0;
     h_out->bins = bins;
-    h_out->equalize = 1;
 
     *h_in = h_out;
     return 0;
@@ -398,7 +401,7 @@ int histogram_delete( histogram **h )
     return 0;
 }
 
-int histogram_normalize( histogram *h, uint32_t height, bool log )
+int histogram_normalize( histogram *h, uint32_t height, bool log, bool equalize )
 {
     if (!h)
         return 1;
@@ -409,7 +412,7 @@ int histogram_normalize( histogram *h, uint32_t height, bool log )
         h->max.blue  = logf(h->max.blue)*100;
     }
 
-    if (h->equalize) {
+    if (equalize) {
         uint32_t max = h->max.red > h->max.green ? h->max.red : h->max.green;
         max = max > h->max.blue ? max : h->max.blue;
         h->max.red = h->max.green = h->max.blue = max;
