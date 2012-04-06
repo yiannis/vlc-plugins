@@ -350,15 +350,15 @@ int histogram_fill( histogram *h, const picture_t *p_bgr )
     if (!h)
         return 1;
 
-    size_t length = p_bgr->format.i_width*p_bgr->format.i_height*3;
-    uint8_t *data = p_bgr->p_data_orig, *data_end = data+length;
-
-    // Fill histogram
-    while (data != data_end) {
-       h->blue [data[0]]++;
-       h->green[data[1]]++;
-       h->red  [data[2]]++;
-       data+=3;
+    const uint8_t const *start = p_bgr->p[0].p_pixels,
+                        *end = start + p_bgr->p[0].i_pitch*p_bgr->p[0].i_visible_lines;
+    for (uint8_t *line = start; line != end; line += p_bgr->p[0].i_pitch) {
+        const uint8_t const *end_visible = line+p_bgr->p[0].i_visible_pitch;
+        for (uint8_t *pel = line; pel != end_visible; pel+=3) {
+            h->blue [pel[0]]++;
+            h->green[pel[1]]++;
+            h->red  [pel[2]]++;
+        }
     }
 
     histogram_update_max( h );
