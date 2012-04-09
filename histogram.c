@@ -26,9 +26,17 @@
  *   - x0,y0
  *   - transparency
  *   - hh
+ *   - Select area
+ * + mutex only access for filter_sys_t::*
  * + Handle histogram does not fit in image case
- * + Y-only histogram
+ * + Y-only histogram [if input is YUV planar]
  * + Visual indication that equalization is on
+ * + Timer 4 benchmark/avg time on Close
+ * + Check for cases where Y<->U planes change places
+ * + Optimizations
+ *   - Timer: paint on 15-30 fps max
+ *   - YUVA OTF
+ *   - bitmap histogram area -> paint on picture
  *  }
  */
 
@@ -62,31 +70,54 @@ static picture_t *Filter( filter_t *, picture_t * );
 static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
 static picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr );
 static void save_ppm( picture_t *p_bgr, const char *file );
-static inline int xy2l(int x, int y, int c, int w, int h);
+static inline int xy2lRGB(int x, int y, int c, plane_t *plane);
+static inline int xy2lY(int x, int y, plane_t *plane);
 static void dump_format( video_format_t *fmt );
 #if 0
 static void dump_picture( picture_t *p_pic, const char *name );
 #endif
 
+static const uint8_t MAX_PIXEL_VALUE    = 255; ///< Support only 8-bit per channel picture_t
+static const uint8_t SHADOW_PIXEL_VALUE = 10;  ///< The value of the drop-shadow pixels
+static const uint8_t FLOOR_PIXEL_VALUE  = 100; ///< Maximum allowed channel value for painted pixels
+static const int     RGB_PLANE          = 0;   ///< The RGB plane offset in array picture_t::p[]
+static const int     LEFT_MARGIN        = 20;
+static const int     BOTTOM_MARGIN      = 10;
+static const int     HISTOGRAM_HEIGHT   = 50;  ///< Default histogram height
+
+#define MAX_NUM_CHANNELS 4   ///< Expect max of 4 channels
 typedef struct {
-    struct max_ {
-        uint32_t red, green, blue;
-    };
-    uint32_t *red, *green, *blue;
-    struct max_ max; //FIXME
-    size_t bins;
-} histogram;
-static inline int histogram_init( histogram **h_in, size_t bins );
-static inline int histogram_fill( histogram *h, const picture_t *p_bgr );
-static inline int histogram_update_max( histogram *h );
-static inline int histogram_delete( histogram **h );
-static inline int histogram_normalize( histogram *h, uint32_t height, bool log, bool equalize );
-static inline int histogram_paint( histogram *h, filter_t *p_filter, picture_t *p_bgr );
+    uint32_t* bins[MAX_NUM_CHANNELS];
+    float     max[MAX_NUM_CHANNELS];
+    int       x0,               ///< x offset from left of image
+              y0,               ///< y offset from bottom of image
+              height,           ///< histogram height in pixels
+              num_channels,     ///< #of channels
+              num_bins;         ///< The number of histogram bins
+} histogram_t;
+static void dump_histogram( histogram_t *histo );
+
+enum {
+    Y = 0,
+    R = 0,
+    G = 1,
+    B = 2,
+};
+
+static int histogram_init( histogram_t **h_in, size_t num_bins, int num_channels );
+static int histogram_fill_rgb( histogram_t *h, const picture_t *p_bgr );
+static int histogram_fill_yuv( histogram_t *h, const picture_t *p_yuv );
+static int histogram_update_max( histogram_t *h );
+static int histogram_delete( histogram_t **h );
+static int histogram_normalize( histogram_t *h, bool log, bool equalize );
+static int histogram_paint_rgb( histogram_t *h, picture_t *p_bgr );
+static int histogram_paint_yuv( histogram_t *h, picture_t *p_yuv );
 
 static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
                      vlc_value_t oldval, vlc_value_t newval, void *p_data );
 
 #define PDUMP( pic ) dump_picture( pic, #pic );
+#define DBG fprintf(stdout, "%s(): %03d survived!\n", __func__, __LINE__);
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -108,12 +139,9 @@ vlc_module_end ()
  *****************************************************************************/
 struct filter_sys_t
 {
-    int hh;                     ///< histogram height in pixels
-    int x0, y0;                 ///< histogram bottom, left corner
     bool equalize;              ///< equalize histogram channels
     bool log;                   ///< Weather to use a logarithmic scale
     bool draw;                  ///< Weather to draw the histogram
-    vout_thread_t *p_vout;      ///< Pointer to video-out thread
     vlc_mutex_t lock;           ///< To lock for read/write on picture
 };
 
@@ -133,9 +161,6 @@ static int Open( vlc_object_t *p_this )
     p_filter->pf_video_filter = Filter;
 
     /*histogram related values*/
-    p_filter->p_sys->hh = 50;
-    p_filter->p_sys->x0 = 50;
-    p_filter->p_sys->y0 = 50;
     p_filter->p_sys->draw = true;
     p_filter->p_sys->log = false;
     p_filter->p_sys->equalize = false;
@@ -185,12 +210,12 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
     picture_t *p_bgr = Input2BGR( p_filter, p_pic );
 
-    const int max_value = 255; ///< Should be calculated from image bpc
-    histogram *histo = NULL;
-    histogram_init( &histo, max_value+1 ); // Number of bins is 0<->max_value
-    histogram_fill( histo, p_bgr );
-    histogram_normalize( histo, p_sys->hh, p_sys->log, p_sys->equalize );
-    histogram_paint( histo, p_filter, p_bgr );
+    histogram_t *histo = NULL;
+    histogram_init( &histo, MAX_PIXEL_VALUE+1, 3); // bin index is: [0,MAX_PIXEL_VALUE]
+    histogram_fill_rgb( histo, p_bgr );
+    histogram_update_max( histo );
+    histogram_normalize( histo, p_sys->log, p_sys->equalize );
+    histogram_paint_rgb( histo, p_bgr );
 
     histogram_delete( &histo );
 
@@ -328,208 +353,284 @@ void save_ppm( picture_t *p_bgr, const char *file )
     free( rgb_buf );
 }
 
-int histogram_init( histogram **h_in, size_t bins )
+int histogram_init( histogram_t **h_in, size_t num_bins, int num_channels )
 {
     if (!h_in || *h_in)
         return 1;
 
-    bins++; // Keep a spare zero bin at the end
-    //...for drop shadow
-    histogram *h_out = (histogram*)malloc( sizeof(histogram) );
-    h_out->red   = (uint32_t*)calloc( bins, sizeof(uint32_t) );
-    h_out->green = (uint32_t*)calloc( bins, sizeof(uint32_t) );
-    h_out->blue  = (uint32_t*)calloc( bins, sizeof(uint32_t) );
-    memset( h_out->red,   0, bins*sizeof(uint32_t) );
-    memset( h_out->green, 0, bins*sizeof(uint32_t) );
-    memset( h_out->blue,  0, bins*sizeof(uint32_t) );
+    histogram_t *h_out = (histogram_t*)malloc( sizeof(histogram_t) );
 
-    h_out->max.red   = 0;
-    h_out->max.green = 0;
-    h_out->max.blue  = 0;
-    h_out->bins = bins;
+    for (int i=0; i<MAX_NUM_CHANNELS; i++) {
+        h_out->bins[i] = NULL;
+        h_out->max[i] = 0.0F;
+    }
+    //h_out->bins[0] = NULL;
+    //h_out->bins[1] = NULL;
+    //h_out->bins[2] = NULL;
+    //h_out->bins[3] = NULL;
+    //h_out->max[0] = 0;
+    //h_out->max[1] = 0;
+    //h_out->max[2] = 0;
+    //h_out->max[3] = 0;
+    h_out->x0 = LEFT_MARGIN;
+    h_out->y0 = BOTTOM_MARGIN;
+    h_out->height = HISTOGRAM_HEIGHT;
+
+    for (int i=0; i<num_channels; i++) {
+        h_out->bins[i] = (uint32_t*)calloc( num_bins, sizeof(uint32_t) );
+        memset( h_out->bins[i],   0, num_bins*sizeof(uint32_t) );
+    }
+    h_out->num_channels = num_channels;
+    h_out->num_bins = num_bins;
 
     *h_in = h_out;
     return 0;
 }
 
-int histogram_fill( histogram *h, const picture_t *p_bgr )
+int histogram_fill_rgb( histogram_t *h, const picture_t *p_bgr )
 {
     if (!h)
         return 1;
 
-    uint8_t *start = p_bgr->p[0].p_pixels,
-            *end = start + p_bgr->p[0].i_pitch*p_bgr->p[0].i_visible_lines;
-    for (uint8_t *line = start; line != end; line += p_bgr->p[0].i_pitch) {
-        const uint8_t const *end_visible = line+p_bgr->p[0].i_visible_pitch;
+    int pitch = p_bgr->p[RGB_PLANE].i_pitch,                    ///< buffer line size in bytes
+        visible_pitch = p_bgr->p[RGB_PLANE].i_visible_pitch;    ///< buffer line size in bytes (visible)
+    uint8_t *start = p_bgr->p[RGB_PLANE].p_pixels,
+            *end = start + pitch * p_bgr->p[RGB_PLANE].i_visible_lines;
+
+    for (uint8_t *line = start; line != end; line += pitch) {
+        const uint8_t const *end_visible = line+visible_pitch;
         for (uint8_t *pel = line; pel != end_visible; pel+=3) {
-            h->blue [pel[0]]++;
-            h->green[pel[1]]++;
-            h->red  [pel[2]]++;
+            h->bins[B][pel[0]]++;
+            h->bins[G][pel[1]]++;
+            h->bins[R][pel[2]]++;
         }
     }
 
-    histogram_update_max( h );
-
     return 0;
 }
 
-int histogram_update_max( histogram *h )
+int histogram_fill_yuv( histogram_t *h, const picture_t *p_yuv )
 {
     if (!h)
         return 1;
 
-    // Get maximum bin value for each color
-    for (uint32_t i=0; i < h->bins; i++) {
-       if (h->blue [i] > h->max.blue)  h->max.blue  = h->blue[i];
-       if (h->green[i] > h->max.green) h->max.green = h->green[i];
-       if (h->red  [i] > h->max.red)   h->max.red   = h->red[i];
+    int pitch = p_yuv->p[Y_PLANE].i_pitch,                    ///< buffer line size in bytes
+        visible_pitch = p_yuv->p[Y_PLANE].i_visible_pitch;    ///< buffer line size in bytes (visible)
+    uint8_t *start = p_yuv->p[Y_PLANE].p_pixels,
+            *end = start + pitch * p_yuv->p[Y_PLANE].i_visible_lines;
+
+    for (uint8_t *line = start; line != end; line += pitch) {
+        const uint8_t const *end_visible = line+visible_pitch;
+        for (uint8_t *pel = line; pel != end_visible; pel++)
+            h->bins[Y][*pel]++;
     }
 
     return 0;
 }
 
-int histogram_delete( histogram **h )
+int histogram_update_max( histogram_t *h )
+{
+    if (!h)
+        return 1;
+
+    //Reset max[i]
+    for (int i=0; i<MAX_NUM_CHANNELS; i++)
+        h->max[i] = 0.0F;
+    //h->max[0] = 0;
+    //h->max[1] = 0;
+    //h->max[2] = 0;
+    //h->max[3] = 0;
+
+    // Get maximum bin value for each color
+    uint32_t value;
+    for (int i=0; i<h->num_channels; i++)
+        for (int b=0; b<h->num_bins; b++) {
+            value = h->bins[i][b];
+            if (value > h->max[i]) h->max[i] = value;
+        }
+
+    return 0;
+}
+
+int histogram_delete( histogram_t **h )
 {
     if (!h || !*h)
         return 1;
 
-    free( (*h)->red );
-    free( (*h)->green );
-    free( (*h)->blue );
+    for (int i=0; i<MAX_NUM_CHANNELS; i++)
+        free( (*h)->bins[i] );
+    //free( (*h)->bins[0] );
+    //free( (*h)->bins[1] );
+    //free( (*h)->bins[2] );
+    //free( (*h)->bins[3] );
     free( *h );
     *h = NULL;
 
     return 0;
 }
 
-int histogram_normalize( histogram *h, uint32_t height, bool log, bool equalize )
+static inline uint32_t maxf(float a, float b, float c)
 {
+    float tmp = a > b ? a : b;
+    return c > tmp ? c : tmp;
+}
+
+static inline uint32_t max(uint32_t a, uint32_t b, uint32_t c)
+{
+    uint32_t tmp = a > b ? a : b;
+    return c > tmp ? c : tmp;
+}
+
+int histogram_normalize( histogram_t *h, bool log, bool equalize )
+{
+    uint32_t height = h->height;
+
     if (!h)
         return 1;
 
-    if (log) {
-        h->max.red   = logf(h->max.red)*100;
-        h->max.green = logf(h->max.green)*100;
-        h->max.blue  = logf(h->max.blue)*100;
-    }
+    if (log)
+        for (int i=0; i<h->num_channels; i++)
+            h->max[i] = log10f(h->max[i]+1);
 
-    if (equalize) {
-        uint32_t max = h->max.red > h->max.green ? h->max.red : h->max.green;
-        max = max > h->max.blue ? max : h->max.blue;
-        h->max.red = h->max.green = h->max.blue = max;
-    }
+    if (equalize && h->num_channels == 3)
+        h->max[0] = h->max[1] = h->max[2] = maxf( h->max[0], h->max[1], h->max[2] );
 
     if (log) {
-       for (uint32_t i = 0; i < h->bins; i++) {
-          h->red  [i] = (logf(h->red  [i])*100*(height-1))/h->max.red;
-          h->green[i] = (logf(h->green[i])*100*(height-1))/h->max.green;
-          h->blue [i] = (logf(h->blue [i])*100*(height-1))/h->max.blue;
-       }
+        for (int i = 0; i < h->num_channels; i++)
+            for (int b=0; b < h->num_bins; b++)
+                h->bins[i][b] = log10f(h->bins[i][b]+1) * (height-1) / h->max[i];
     } else {
-       for (uint32_t i = 0; i < h->bins; i++) {
-          h->red  [i] = (h->red  [i]*(height-1))/h->max.red;
-          h->green[i] = (h->green[i]*(height-1))/h->max.green;
-          h->blue [i] = (h->blue [i]*(height-1))/h->max.blue;
-       }
+        for (int i = 0; i < h->num_channels; i++)
+            for (int b=0; b < h->num_bins; b++)
+                h->bins[i][b] = h->bins[i][b] * (height-1) / h->max[i];
     }
 
-    h->max.red   = 0;
-    h->max.green = 0;
-    h->max.blue  = 0;
-
-    histogram_update_max( h );
+    // Set max[i] to new normalized height
+    for (int i=0; i<h->num_channels; i++)
+        h->max[i] = height-1;
 
     return 0;
 }
 
-int histogram_paint( histogram *h, filter_t *p_filter, picture_t *p_bgr )
+inline int xy2lY(int x, int y, plane_t *plane)
 {
-    int x0 = p_filter->p_sys->x0,
-        y0 = p_filter->p_sys->y0,
-        hh = p_filter->p_sys->hh;
-    const uint8_t max_value = 255;
-    const uint8_t floor = 100;
-    int width = p_bgr->p[0].i_pitch / 3,
-        height = p_bgr->p[0].i_visible_lines;
-    uint8_t * const data = p_bgr->p[0].p_pixels;
-
-    for (uint32_t bin=0; bin < h->bins-1; bin++) {
-       int x = x0+bin;
-       // Paint red histo
-       for (uint32_t j=0; j <= h->red[bin]; j++) {
-          int y = y0+j;
-          int index = xy2l(x,y,2,width,height);
-          data[index] = max_value;
-          if (data[index-1] > floor) data[index-1] -= floor; else data[index-1] = 0;
-          if (data[index-2] > floor) data[index-2] -= floor; else data[index-1] = 0;
-       }
-       // Drop shadow [red]
-       for (uint32_t j=h->red[bin+1]; j<h->red[bin]; j++) {
-          int y = y0+j;
-          int index = xy2l(x+1,y,0,width,height);
-          data[index] = 10;
-          data[index+1] = 10;
-          data[index+2] = 10;
-       }
-       int y = y0-1, index = xy2l(x,y,0,width,height); //For drop shadow under histo
-       data[index] = 10;
-       data[index+1] = 10;
-       data[index+2] = 10;
-       // Paint green histo
-       for (uint32_t j=0; j <= h->green[bin]; j++) {
-          int y = y0+j+hh+10;
-          int index = xy2l(x,y,1,width,height);
-          data[index] = max_value;
-          if (data[index-1] > floor) data[index-1] -= floor; else data[index-1] = 0;
-          if (data[index+1] > floor) data[index+1] -= floor; else data[index+1] = 0;
-       }
-       // Drop shadow [green]
-       for (uint32_t j=h->green[bin+1]; j<h->green[bin]; j++) {
-          int y = y0+j+hh+10;
-          int index = xy2l(x+1,y,0,width,height);
-          data[index] = 10;
-          data[index+1] = 10;
-          data[index+2] = 10;
-       }
-       y += hh+10;
-       index = xy2l(x,y,0,width,height);
-       data[index] = 10;
-       data[index+1] = 10;
-       data[index+2] = 10;
-       // Paint blue histo
-       for (uint32_t j=0; j <= h->blue[bin]; j++) {
-          int y = y0+j+hh+10+hh+10;
-          int index = xy2l(x,y,0,width,height);
-          data[index] = max_value;
-          if (data[index+1] > floor) data[index+1] -= floor; else data[index+1] = 0;
-          if (data[index+2] > floor) data[index+2] -= floor; else data[index+2] = 0;
-       }
-       // Drop shadow [blue]
-       for (uint32_t j=h->blue[bin+1]; j<h->blue[bin]; j++) {
-          int y = y0+j+hh+10+hh+10;
-          int index = xy2l(x+1,y,0,width,height);
-          data[index] = 10;
-          data[index+1] = 10;
-          data[index+2] = 10;
-       }
-       y += hh+10;
-       index = xy2l(x,y,0,width,height);
-       data[index] = 10;
-       data[index+1] = 10;
-       data[index+2] = 10;
-    }
-
-    return 0;
-}
-
-int xy2l(int x, int y, int c, int w, int h)
-{
-   if (x>=w || y>=h) {
-      printf("[%d,%d,%d]->%d {%dx%dx3=%d}\n",x,y,c,(h-y-1)*w*3+x*3+c,w,h,w*h*3);
+#ifdef HISTOGRAM_DEBUG
+   if (x>=plane->i_visible_pitch || y>=plane->i_visible_lines) {
+      printf("[%d,%d]->%d {%dx%d}\n",x,y,(plane->i_visible_lines-y-1)*plane->i_pitch+x,plane->i_visible_pitch,plane->i_visible_lines);
       fflush(stdout);
       return 0;
-   } else
-      return (h-y-1)*w*3+x*3+c;
+   }
+#endif
+      return (plane->i_visible_lines-y-1)*plane->i_pitch+x;
+}
+
+int histogram_paint_yuv( histogram_t *histo, picture_t *p_yuv )
+{
+    int x0 = histo->x0,
+        y0 = histo->y0;
+    uint8_t *data  = p_yuv->p[Y_PLANE].p_pixels,
+            *pixel = NULL;
+
+    for (int bin=0; bin < histo->num_bins; bin++) {
+       int x = x0+bin;
+       for (uint32_t j=0; j <= histo->bins[Y][bin]; j++) {
+           pixel = data + xy2lY(x, y0+j, &p_yuv->p[Y_PLANE]);
+           *pixel = ~*pixel;
+          //data[xy2lY(x,y0+j,&p_yuv[Y_PLANE])] = MAX_PIXEL_VALUE;
+       }
+    }
+
+    return 0;
+}
+
+inline int xy2lRGB(int x, int y, int c, plane_t *plane)
+{
+#ifdef HISTOGRAM_DEBUG
+    int w = plane->i_visible_pitch/3, h = plane->i_visible_lines;
+    if (x>=w || y>=h || c>2) {
+        printf("[%d,%d,%d]->%d {%dx%dx3=%d}\n",x,y,c,(plane->i_visible_lines-y-1)*plane->i_pitch+x*3+c,w,h,w*h*3);
+        fflush(stdout);
+        return 0;
+    }
+#endif
+      return (plane->i_visible_lines-y-1)*plane->i_pitch+x*3+c;
+}
+
+int histogram_paint_rgb( histogram_t *histo, picture_t *p_bgr )
+{
+    const int yr0 = histo->y0,
+              yg0 = yr0 + histo->height + BOTTOM_MARGIN,
+              yb0 = yg0 + histo->height + BOTTOM_MARGIN;
+    uint8_t * const data = p_bgr->p[0].p_pixels;
+
+#define IDX(x,y,c) xy2lRGB( (x), (y), (c), &p_bgr->p[RGB_PLANE] )
+    /// For each bin in the histogram, paint a vertical bar in R/G/B color
+    for (int bin=0; bin < histo->num_bins; bin++) {
+        // y-min for drop shaddow bar
+       const uint32_t jsr0 = (bin == histo->num_bins-1) ? 0 : histo->bins[R][bin+1]+1;
+       const uint32_t jsg0 = (bin == histo->num_bins-1) ? 0 : histo->bins[G][bin+1]+1;
+       const uint32_t jsb0 = (bin == histo->num_bins-1) ? 0 : histo->bins[B][bin+1]+1;
+
+       const int x = histo->x0 + bin;
+       int index_s;
+
+       // Paint red bar
+       for (uint32_t j = 0; j <= histo->bins[R][bin]; j++) {
+          int y = yr0 + j;
+          int index = IDX(x, y, 2);
+          data[index] = MAX_PIXEL_VALUE;
+          if (data[index-1] > FLOOR_PIXEL_VALUE) data[index-1] -= FLOOR_PIXEL_VALUE; else data[index-1] = 0;
+          if (data[index-2] > FLOOR_PIXEL_VALUE) data[index-2] -= FLOOR_PIXEL_VALUE; else data[index-1] = 0;
+       }
+       // Drop shadow, 1 pel right - 1 pel below red bar
+       for (uint32_t j = jsr0; j < histo->bins[R][bin]; j++) {
+          int y = yr0 + j;
+          int index = IDX(x+1, y, 0);
+          data[index] = data[index+1] = data[index+2] = SHADOW_PIXEL_VALUE;
+       }
+       // Drop shadow under the next red bar
+       index_s = IDX(x+1, yr0-1, 0);
+       data[index_s] = data[index_s+1] = data[index_s+2] = SHADOW_PIXEL_VALUE;
+
+       // Paint green bar
+       for (uint32_t j = 0; j <= histo->bins[G][bin]; j++) {
+          int y = yg0 + j;
+          int index = IDX(x, y, 1);
+          data[index] = MAX_PIXEL_VALUE;
+          if (data[index-1] > FLOOR_PIXEL_VALUE) data[index-1] -= FLOOR_PIXEL_VALUE; else data[index-1] = 0;
+          if (data[index+1] > FLOOR_PIXEL_VALUE) data[index+1] -= FLOOR_PIXEL_VALUE; else data[index+1] = 0;
+       }
+       // Drop shadow, 1 pel right - 1 pel below green bar
+       for (uint32_t j = jsg0; j < histo->bins[G][bin]; j++) {
+          int y = yg0 + j;
+          int index = IDX(x+1, y, 0);
+          data[index] = data[index+1] = data[index+2] = SHADOW_PIXEL_VALUE;
+       }
+       // Drop shadow under the next green bar
+       index_s = IDX(x+1, yg0-1, 0);
+       data[index_s] = data[index_s+1] = data[index_s+2] = SHADOW_PIXEL_VALUE;
+
+       // Paint blue bar
+       for (uint32_t j=0; j <= histo->bins[B][bin]; j++) {
+          int y = yb0 + j;
+          int index = IDX(x, y, 0);
+          data[index] = MAX_PIXEL_VALUE;
+          if (data[index+1] > FLOOR_PIXEL_VALUE) data[index+1] -= FLOOR_PIXEL_VALUE; else data[index+1] = 0;
+          if (data[index+2] > FLOOR_PIXEL_VALUE) data[index+2] -= FLOOR_PIXEL_VALUE; else data[index+2] = 0;
+       }
+       // Drop shadow, 1 pel right - 1 pel below blue bar
+       for (uint32_t j = jsb0; j < histo->bins[B][bin]; j++) {
+          int y = yb0 + j;
+          int index = IDX(x+1, y, 0);
+          data[index] = data[index+1] = data[index+2] = SHADOW_PIXEL_VALUE;
+       }
+       // Drop shadow under the next blue bar
+       index_s = IDX(x+1, yb0-1, 0);
+       data[index_s] = data[index_s+1] = data[index_s+2] = SHADOW_PIXEL_VALUE;
+    }
+#undef IDX
+
+    return 0;
 }
 
 void dump_format( video_format_t *fmt )
@@ -544,6 +645,22 @@ void dump_format( video_format_t *fmt )
            fmt->i_height,
            fmt->i_bits_per_pixel,
            fmt->i_chroma);
+}
+
+void dump_histogram( histogram_t *histo )
+{
+    static int file_id = 0;
+    char filename[128];
+
+    snprintf(filename, sizeof filename, "%06d-histogram.txt", file_id++);
+    FILE* out = fopen( filename, "w" );
+
+    for (int i=0; i<histo->num_channels; i++) {
+        for (int bin=0; bin<histo->num_bins; bin++)
+            fprintf(out, "%d\n", histo->bins[i][bin]);
+        fprintf(out, "\n\n");
+    }
+    fclose( out );
 }
 
 #if 0
