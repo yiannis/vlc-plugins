@@ -28,10 +28,8 @@
  *   - hh
  *   - Select area
  * + Handle histogram does not fit in image case
- * + Y-only histogram [if input is YUV planar]
  * + Visual indication that equalization is on
  * + Timer 4 benchmark/avg time on Close
- * + Check for cases where Y<->U planes change places
  * + Optimizations
  *   - Timer: paint on 15-30 fps max
  *   - YUVA OTF
@@ -58,9 +56,14 @@
 
 #include <vlc_filter.h>
 
+#include "filter_picture.h"
+
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
+#define HISTOGRAM_INVERT
+#define MAX_NUM_CHANNELS 4   ///< Expect max of 4 channels
+
 static int  Open      ( vlc_object_t * );
 static void Close     ( vlc_object_t * );
 
@@ -84,7 +87,6 @@ static const int     LEFT_MARGIN        = 20;
 static const int     BOTTOM_MARGIN      = 10;
 static const int     HISTOGRAM_HEIGHT   = 50;  ///< Default histogram height
 
-#define MAX_NUM_CHANNELS 4   ///< Expect max of 4 channels
 typedef struct {
     uint32_t* bins[MAX_NUM_CHANNELS];
     float     max[MAX_NUM_CHANNELS];
@@ -122,7 +124,7 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
  *****************************************************************************/
 vlc_module_begin ()
     set_description( N_("Histogram video filter") )
-    set_shortname( N_("Embeds RGB histogram") )
+    set_shortname( N_("Embeds RGB/Luminance histogram") )
     set_category( CAT_VIDEO )
     set_subcategory( SUBCAT_VIDEO_VFILTER )
     set_capability( "video filter2", 0 )
@@ -138,9 +140,10 @@ vlc_module_end ()
  *****************************************************************************/
 struct filter_sys_t
 {
-    bool equalize;              ///< equalize histogram channels
-    bool log;                   ///< Weather to use a logarithmic scale
-    bool draw;                  ///< Weather to draw the histogram
+    bool equalize,              ///< equalize histogram channels
+         log,                   ///< Weather to use a logarithmic scale
+         draw,                  ///< Whether to draw the histogram
+         luminance;             ///< Toggle between Y or RGB histogram
     vlc_mutex_t lock;           ///< To lock for read/write on picture
 };
 
@@ -163,6 +166,7 @@ static int Open( vlc_object_t *p_this )
     p_filter->p_sys->draw = true;
     p_filter->p_sys->log = false;
     p_filter->p_sys->equalize = false;
+    p_filter->p_sys->luminance = false;
 
     /*create mutex*/
     vlc_mutex_init( &p_filter->p_sys->lock );
@@ -200,7 +204,11 @@ static void Close( vlc_object_t *p_this )
  *****************************************************************************/
 static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
-    bool draw, log, equalize;
+    bool draw, log, equalize, luminance;
+    picture_t *p_bgr = NULL,
+              *p_yuv = NULL,
+              *p_outpic = NULL;
+    histogram_t *histo = NULL;
 
     if( !p_pic ) return NULL;
 
@@ -210,36 +218,50 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         draw = p_sys->draw;
         log = p_sys->log;
         equalize = p_sys->equalize;
+        luminance = p_sys->luminance;
     vlc_mutex_unlock( &p_sys->lock );
 
     if (!draw)
         return p_pic;
 
-    picture_t *p_bgr = Input2BGR( p_filter, p_pic );
+    if (luminance) {
+        p_yuv = p_pic;
 
-    histogram_t *histo = NULL;
-    histogram_init( &histo, MAX_PIXEL_VALUE+1, 3); // bin index is: [0,MAX_PIXEL_VALUE]
-    histogram_fill_rgb( histo, p_bgr );
-    histogram_update_max( histo );
-    histogram_normalize( histo, log, equalize );
-    histogram_paint_rgb( histo, p_bgr );
+        histogram_init( &histo, MAX_PIXEL_VALUE+1, 1); // bin index is: [0,MAX_PIXEL_VALUE]
+        histogram_fill_yuv( histo, p_yuv );
+        histogram_update_max( histo );
+        histogram_normalize( histo, log, equalize );
+        histogram_paint_yuv( histo, p_yuv );
+        histogram_delete( &histo );
 
-    histogram_delete( &histo );
+        p_outpic = p_yuv;
+    } else {
+        p_bgr = Input2BGR( p_filter, p_pic );
 
-    picture_t *p_yuv = BGR2Output( p_filter, p_bgr );
-    picture_Release( p_bgr );
+        histogram_init( &histo, MAX_PIXEL_VALUE+1, 3); // bin index is: [0,MAX_PIXEL_VALUE]
+        histogram_fill_rgb( histo, p_bgr );
+        histogram_update_max( histo );
+        histogram_normalize( histo, log, equalize );
+        histogram_paint_rgb( histo, p_bgr );
 
-    picture_t *p_outpic = filter_NewPicture( p_filter );
-    if( !p_outpic )
-    {
+        histogram_delete( &histo );
+
+        p_yuv = BGR2Output( p_filter, p_bgr );
+        picture_Release( p_bgr );
+
+        p_outpic = filter_NewPicture( p_filter );
+        if( !p_outpic )
+        {
+            picture_Release( p_pic );
+            return NULL;
+        }
+        picture_CopyPixels( p_outpic, p_yuv );
+        picture_Release( p_yuv );
+
+        picture_CopyProperties( p_outpic, p_pic );
         picture_Release( p_pic );
-        return NULL;
     }
-    picture_CopyPixels( p_outpic, p_yuv );
-    picture_Release( p_yuv );
 
-    picture_CopyProperties( p_outpic, p_pic );
-    picture_Release( p_pic );
     return p_outpic;
 }
 
@@ -280,11 +302,26 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
         case KEY_PAGEDOWN:
             p_sys->log = false;
             break;
+        case KEY_ENTER:
+            p_sys->luminance = !p_sys->luminance;
+            break;
         case '/':
             p_sys->equalize = !p_sys->equalize;
             break;
     }
 
+    switch (p_filter->fmt_in.video.i_chroma) {
+        CASE_PLANAR_YUV
+            break;
+        default:
+            // If the user asked for a luminance histogram
+            // and the codec is not planar, ignore user request
+            if (p_sys->luminance) {
+                p_sys->luminance = false;
+                msg_Warn( p_this, "Only planar YUV is suported" );
+            }
+            break;
+    }
     vlc_mutex_unlock( &p_sys->lock );
 
     return VLC_SUCCESS;
@@ -534,17 +571,29 @@ inline int xy2lY(int x, int y, plane_t *plane)
 int histogram_paint_yuv( histogram_t *histo, picture_t *p_yuv )
 {
     int x0 = histo->x0,
-        y0 = histo->y0;
+        y0 = 4*histo->y0;
     uint8_t *data  = p_yuv->p[Y_PLANE].p_pixels,
             *pixel = NULL;
 
     for (int bin=0; bin < histo->num_bins; bin++) {
-       int x = x0+bin;
+       const uint32_t js0 = (bin == histo->num_bins-1) ? 0 : histo->bins[Y][bin+1]+1;
+       const int x = x0+bin;
+
+       // Paint vertical bar
        for (uint32_t j=0; j <= histo->bins[Y][bin]; j++) {
+#ifdef HISTOGRAM_INVERT
            pixel = data + xy2lY(x, y0+j, &p_yuv->p[Y_PLANE]);
            *pixel = ~*pixel;
-          //data[xy2lY(x,y0+j,&p_yuv[Y_PLANE])] = MAX_PIXEL_VALUE;
+#else
+           data[xy2lY(x, y0+j, &p_yuv->p[Y_PLANE])] = MAX_PIXEL_VALUE;
+#endif
        }
+       // Drop shadow, 1 pel right - 1 pel below vertical bar
+       for (uint32_t j = js0; j < histo->bins[Y][bin]; j++) {
+          data[xy2lY(x+1, y0 + j, &p_yuv->p[Y_PLANE])] = SHADOW_PIXEL_VALUE;
+       }
+       // Drop shadow under the next vertical bar
+       data[xy2lY(x+1, y0-1, &p_yuv->p[Y_PLANE])] = SHADOW_PIXEL_VALUE;
     }
 
     return 0;
