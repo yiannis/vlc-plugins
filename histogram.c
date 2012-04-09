@@ -27,7 +27,6 @@
  *   - transparency
  *   - hh
  *   - Select area
- * + mutex only access for filter_sys_t::*
  * + Handle histogram does not fit in image case
  * + Y-only histogram [if input is YUV planar]
  * + Visual indication that equalization is on
@@ -201,11 +200,19 @@ static void Close( vlc_object_t *p_this )
  *****************************************************************************/
 static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
+    bool draw, log, equalize;
+
     if( !p_pic ) return NULL;
 
     filter_sys_t *p_sys = p_filter->p_sys;
 
-    if (!p_sys->draw)
+    vlc_mutex_lock( &p_sys->lock );
+        draw = p_sys->draw;
+        log = p_sys->log;
+        equalize = p_sys->equalize;
+    vlc_mutex_unlock( &p_sys->lock );
+
+    if (!draw)
         return p_pic;
 
     picture_t *p_bgr = Input2BGR( p_filter, p_pic );
@@ -214,7 +221,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     histogram_init( &histo, MAX_PIXEL_VALUE+1, 3); // bin index is: [0,MAX_PIXEL_VALUE]
     histogram_fill_rgb( histo, p_bgr );
     histogram_update_max( histo );
-    histogram_normalize( histo, p_sys->log, p_sys->equalize );
+    histogram_normalize( histo, log, equalize );
     histogram_paint_rgb( histo, p_bgr );
 
     histogram_delete( &histo );
