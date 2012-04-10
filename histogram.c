@@ -402,6 +402,18 @@ int histogram_init( histogram_t **h_in, size_t num_bins, int num_channels )
     if (!h_in || *h_in)
         return 1;
 
+    // Do not allow random number of bins
+    switch (num_bins) {
+        case 256:
+        case 128:
+        case  64:
+        case  32:
+            break;
+        default:
+            num_bins = 256;
+            break;
+    }
+
     histogram_t *h_out = (histogram_t*)malloc( sizeof(histogram_t) );
 
     for (int i=0; i<MAX_NUM_CHANNELS; i++) {
@@ -441,12 +453,13 @@ int histogram_fill_rgb( histogram_t *h, const picture_t *p_bgr )
     uint8_t *start = p_bgr->p[RGB_PLANE].p_pixels,
             *end = start + pitch * p_bgr->p[RGB_PLANE].i_visible_lines;
 
+    int shift = 8 - (int)round( log2(h->num_bins) ); ///< Right shift for pixel values when num_bins < 256
     for (uint8_t *line = start; line != end; line += pitch) {
         const uint8_t const *end_visible = line+visible_pitch;
         for (uint8_t *pel = line; pel != end_visible; pel+=3) {
-            h->bins[B][pel[0]]++;
-            h->bins[G][pel[1]]++;
-            h->bins[R][pel[2]]++;
+            h->bins[B][pel[0]>>shift]++;
+            h->bins[G][pel[1]>>shift]++;
+            h->bins[R][pel[2]>>shift]++;
         }
     }
 
@@ -463,10 +476,11 @@ int histogram_fill_yuv( histogram_t *h, const picture_t *p_yuv )
     uint8_t *start = p_yuv->p[Y_PLANE].p_pixels,
             *end = start + pitch * p_yuv->p[Y_PLANE].i_visible_lines;
 
+    int shift = 8 - (int)round( log2(h->num_bins) ); ///< Right shift for pixel values when num_bins < 256
     for (uint8_t *line = start; line != end; line += pitch) {
         const uint8_t const *end_visible = line+visible_pitch;
         for (uint8_t *pel = line; pel != end_visible; pel++)
-            h->bins[Y][*pel]++;
+            h->bins[Y][(*pel)>>shift]++;
     }
 
     return 0;
