@@ -27,7 +27,6 @@
  *   - transparency
  *   - hh
  *   - Select area
- * + Handle histogram does not fit in image case
  * + Visual indication that equalization is on
  * + Timer 4 benchmark/avg time on Close
  * + Optimizations
@@ -105,7 +104,7 @@ enum {
     B = 2,
 };
 
-static int histogram_init( histogram_t **h_in, size_t num_bins, int num_channels );
+static int histogram_init( histogram_t **h_in, size_t num_bins, int height, int num_channels );
 static int histogram_fill_rgb( histogram_t *h, const picture_t *p_bgr );
 static int histogram_fill_yuv( histogram_t *h, const picture_t *p_yuv );
 static int histogram_update_max( histogram_t *h );
@@ -113,6 +112,9 @@ static int histogram_delete( histogram_t **h );
 static int histogram_normalize( histogram_t *h, bool log, bool equalize );
 static int histogram_paint_rgb( histogram_t *h, picture_t *p_bgr );
 static int histogram_paint_yuv( histogram_t *h, picture_t *p_yuv );
+static int histogram_bins( int w );
+static int histogram_height_rgb( int h );
+static int histogram_height_yuv( int h );
 
 static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
                      vlc_value_t oldval, vlc_value_t newval, void *p_data );
@@ -227,7 +229,13 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     if (luminance) {
         p_yuv = p_pic;
 
-        histogram_init( &histo, MAX_PIXEL_VALUE+1, 1); // bin index is: [0,MAX_PIXEL_VALUE]
+        int num_bins = histogram_bins( p_yuv->p[Y_PLANE].i_visible_pitch ),
+            height   = histogram_height_yuv( p_yuv->p[Y_PLANE].i_visible_lines );
+        if (num_bins*height == 0) {
+            msg_Warn( p_filter, "Not enough space to paint our historam :-(" );
+            return p_pic;
+        }
+        histogram_init( &histo, num_bins, height, 1 );
         histogram_fill_yuv( histo, p_yuv );
         histogram_update_max( histo );
         histogram_normalize( histo, log, equalize );
@@ -238,7 +246,13 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     } else {
         p_bgr = Input2BGR( p_filter, p_pic );
 
-        histogram_init( &histo, MAX_PIXEL_VALUE+1, 3); // bin index is: [0,MAX_PIXEL_VALUE]
+        int num_bins = histogram_bins( p_bgr->p[RGB_PLANE].i_visible_pitch/3 ),
+            height   = histogram_height_rgb( p_bgr->p[RGB_PLANE].i_visible_lines );
+        if (num_bins*height == 0) {
+            msg_Warn( p_filter, "Not enough space to paint our historam :-(" );
+            return p_pic;
+        }
+        histogram_init( &histo, num_bins, height, 3 );
         histogram_fill_rgb( histo, p_bgr );
         histogram_update_max( histo );
         histogram_normalize( histo, log, equalize );
@@ -397,7 +411,41 @@ void save_ppm( picture_t *p_bgr, const char *file )
     free( rgb_buf );
 }
 
-int histogram_init( histogram_t **h_in, size_t num_bins, int num_channels )
+static int histogram_bins( int width )
+{
+    int free_width = width - 2*LEFT_MARGIN;
+
+    if (free_width >= 256)
+        return 256;
+    else if (free_width >= 128)
+        return 128;
+    else if (free_width >= 64)
+        return 64;
+    else if (free_width >= 32)
+        return 32;
+    else
+        return 0;
+}
+
+static int histogram_height_rgb( int height )
+{
+    int free_height = (height - 4*BOTTOM_MARGIN) / 3;
+    if (free_height < BOTTOM_MARGIN)
+        return 0;
+
+    return free_height > HISTOGRAM_HEIGHT ? HISTOGRAM_HEIGHT : free_height;
+}
+
+static int histogram_height_yuv( int height )
+{
+    int free_height = (height - 2*BOTTOM_MARGIN);
+    if (free_height < BOTTOM_MARGIN)
+        return 0;
+
+    return free_height > HISTOGRAM_HEIGHT ? HISTOGRAM_HEIGHT : free_height;
+}
+
+int histogram_init( histogram_t **h_in, size_t num_bins, int height, int num_channels )
 {
     if (!h_in || *h_in)
         return 1;
@@ -420,17 +468,9 @@ int histogram_init( histogram_t **h_in, size_t num_bins, int num_channels )
         h_out->bins[i] = NULL;
         h_out->max[i] = 0.0F;
     }
-    //h_out->bins[0] = NULL;
-    //h_out->bins[1] = NULL;
-    //h_out->bins[2] = NULL;
-    //h_out->bins[3] = NULL;
-    //h_out->max[0] = 0;
-    //h_out->max[1] = 0;
-    //h_out->max[2] = 0;
-    //h_out->max[3] = 0;
     h_out->x0 = LEFT_MARGIN;
     h_out->y0 = BOTTOM_MARGIN;
-    h_out->height = HISTOGRAM_HEIGHT;
+    h_out->height = height;
 
     for (int i=0; i<num_channels; i++) {
         h_out->bins[i] = (uint32_t*)calloc( num_bins, sizeof(uint32_t) );
@@ -494,10 +534,6 @@ int histogram_update_max( histogram_t *h )
     //Reset max[i]
     for (int i=0; i<MAX_NUM_CHANNELS; i++)
         h->max[i] = 0.0F;
-    //h->max[0] = 0;
-    //h->max[1] = 0;
-    //h->max[2] = 0;
-    //h->max[3] = 0;
 
     // Get maximum bin value for each color
     uint32_t value;
@@ -517,10 +553,6 @@ int histogram_delete( histogram_t **h )
 
     for (int i=0; i<MAX_NUM_CHANNELS; i++)
         free( (*h)->bins[i] );
-    //free( (*h)->bins[0] );
-    //free( (*h)->bins[1] );
-    //free( (*h)->bins[2] );
-    //free( (*h)->bins[3] );
     free( *h );
     *h = NULL;
 
@@ -585,7 +617,7 @@ inline int xy2lY(int x, int y, plane_t *plane)
 int histogram_paint_yuv( histogram_t *histo, picture_t *p_yuv )
 {
     int x0 = histo->x0,
-        y0 = 4*histo->y0;
+        y0 = histo->y0;
     uint8_t *data  = p_yuv->p[Y_PLANE].p_pixels,
             *pixel = NULL;
 
