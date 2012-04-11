@@ -223,11 +223,17 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         luminance = p_sys->luminance;
     vlc_mutex_unlock( &p_sys->lock );
 
-    if (!draw)
-        return p_pic;
+    if (!draw) {
+        p_outpic = filter_NewPicture( p_filter );
+        picture_Copy( p_outpic, p_pic );
+        picture_Release( p_pic );
+        return p_outpic;
+    }
 
     if (luminance) {
-        p_yuv = p_pic;
+        p_yuv = filter_NewPicture( p_filter );
+        picture_Copy( p_yuv , p_pic );
+        picture_Release( p_pic );
 
         int num_bins = histogram_bins( p_yuv->p[Y_PLANE].i_visible_pitch ),
             height   = histogram_height_yuv( p_yuv->p[Y_PLANE].i_visible_lines );
