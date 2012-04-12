@@ -895,8 +895,8 @@ int pictureYUVA_blend_toI420( picture_t *p_out, picture_t *p_histo, int x0, int 
             *v = p_histo->p[V_PLANE].p_pixels,
             *a = p_histo->p[A_PLANE].p_pixels,
             *o = p_out->p[Y_PLANE].p_pixels + y0*o_pitch + x0,
-            *uo= p_out->p[U_PLANE].p_pixels + y0/2*u_pitch + x0/2,
-            *vo= p_out->p[V_PLANE].p_pixels + y0/2*v_pitch + x0/2;
+            *uo= p_out->p[U_PLANE].p_pixels + y0/2*uo_pitch + x0/2,
+            *vo= p_out->p[V_PLANE].p_pixels + y0/2*vo_pitch + x0/2;
     uint8_t *y_end = y + p_histo->p[Y_PLANE].i_visible_lines*y_pitch;
     uint8_t *y1, *y2, *y3, *y4,
             *u1, *u2, *u3, *u4,
