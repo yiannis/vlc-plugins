@@ -32,7 +32,8 @@
  * + Add support for YV12 (easy: switch UV planes on I420)
  * + Optimizations
  *   - Timer: paint on 15-30 fps max
- *   - Keep p_yuva in p_sys
+ *   - Sample input image 4x-20x(!?)
+ *   - Cache p_yuva in p_sys
  *  }
  */
 
@@ -45,6 +46,7 @@
 #endif
 
 #include <math.h>
+#include <assert.h>
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
@@ -412,10 +414,7 @@ picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic )
 
 picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr )
 {
-    if (p_filter->fmt_out.video.i_chroma == VLC_CODEC_RGB24) {
-        printf("Image is already BGR\n");
-        return p_bgr;
-    }
+    assert( p_filter->fmt_out.video.i_chroma != VLC_CODEC_RGB24 );
 
     image_handler_t *img_handler = image_HandlerCreate( p_filter );
 
@@ -450,7 +449,6 @@ void save_ppm( picture_t *p_bgr, const char *file )
         }
     }
 
-    printf("Saving frame as %s.\n", file);
     FILE* out = fopen( file, "w" );
     fprintf( out, "P6\n# CREATOR: vlc-histogram\n%d %d\n255\n", width, height );
     fwrite( (void*)rgb_buf, 1, size, out );
