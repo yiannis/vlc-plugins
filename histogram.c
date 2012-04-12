@@ -46,6 +46,7 @@
 #endif
 
 #include <math.h>
+#include <string.h>
 #include <assert.h>
 
 #include <vlc_common.h>
@@ -122,6 +123,7 @@ static int histogram_height_rgb( int h );
 static int histogram_height_yuv( int h );
 
 static int pictureYUVA_blend_toI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static void picture_ZeroPixels( picture_t *p_pic );
 
 static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
                      vlc_value_t oldval, vlc_value_t newval, void *p_data );
@@ -285,6 +287,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         fmt_yuva.i_visible_width = fmt_yuva.i_width;
         fmt_yuva.i_visible_height = fmt_yuva.i_height;
         picture_t *p_yuva = picture_NewFromFormat( &fmt_yuva );
+        picture_ZeroPixels( p_yuva );
         video_format_Clean( &fmt_yuva );
         histogram_rgb_paint_yuv( histo, p_yuva );
 
@@ -1023,6 +1026,14 @@ int histogram_paint_rgb( histogram_t *histo, picture_t *p_bgr )
 #undef IDX
 
     return 0;
+}
+
+void picture_ZeroPixels( picture_t *p_pic )
+{
+    for (int i=0; i<p_pic->i_planes; i++) {
+        int length = p_pic->p[i].i_lines * p_pic->p[i].i_pitch;
+        memset( p_pic->p[i].p_pixels, 0, length );
+    }
 }
 
 void dump_format( video_format_t *fmt )
