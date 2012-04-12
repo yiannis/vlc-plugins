@@ -291,10 +291,13 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         video_format_Clean( &fmt_yuva );
         histogram_rgb_paint_yuv( histo, p_yuva );
 
-        histogram_delete( &histo );
-
         // Blend the histogram image with the output picture
-        pictureYUVA_blend_toI420( p_outpic, p_yuva, 0, 0 );
+        pictureYUVA_blend_toI420( p_outpic,
+                                  p_yuva,
+                                  histo->x0,
+                                  p_outpic->format.i_height-(histo->y0+p_yuva->format.i_height) );
+
+        histogram_delete( &histo );
         picture_Release( p_yuva );
     } else {
         p_bgr = Input2BGR( p_filter, p_pic );
@@ -460,6 +463,8 @@ void save_ppm( picture_t *p_bgr, const char *file )
     free( rgb_buf );
 }
 
+/// Get the maximum allowed width of the histogram.
+/// Provided that there should be a left and right margin
 static int histogram_bins( int width )
 {
     int free_width = width - 2*LEFT_MARGIN;
@@ -476,6 +481,9 @@ static int histogram_bins( int width )
         return 0;
 }
 
+/// Get the maximum allowed height of the histogram.
+/// It should be HISTOGRAM_HEIGHT or smaller, provided that
+/// there should be top and bottom margins between each RGB histogram
 static int histogram_height_rgb( int height )
 {
     int free_height = (height - 4*BOTTOM_MARGIN) / 3;
