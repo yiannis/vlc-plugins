@@ -76,7 +76,7 @@ static picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_
 static picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
 static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
-static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
+static picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
 static picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr );
 static void picture_ZeroPixels( picture_t *p_pic );
 static void save_ppm( picture_t *p_bgr, const char *file );
@@ -324,7 +324,7 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
     return VLC_SUCCESS;
 }
 
-picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic )
+picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic )
 {
     if (p_pic->format.i_chroma == VLC_CODEC_RGB24)
         return p_pic;
@@ -1049,7 +1049,7 @@ picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pi
 
 picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize)
 {
-    picture_t *p_bgr = Input2BGR( p_filter, p_pic );
+    picture_t *p_bgr = picture_ConvertToRGB24( p_filter, p_pic );
 
     int num_bins = histogram_bins( p_bgr->p[RGB_PLANE].i_visible_pitch/3 ),
         height   = histogram_height_rgb( p_bgr->p[RGB_PLANE].i_visible_lines );
