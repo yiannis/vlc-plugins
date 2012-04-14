@@ -77,7 +77,7 @@ static picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t
 static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
 static picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
-static picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr );
+static picture_t* picture_ConvertRGB24ToOutputFmt( filter_t *p_filter, picture_t *p_bgr );
 static void picture_ZeroPixels( picture_t *p_pic );
 static void save_ppm( picture_t *p_bgr, const char *file );
 
@@ -345,7 +345,7 @@ picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic )
     return p_bgr;
 }
 
-picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr )
+picture_t* picture_ConvertRGB24ToOutputFmt( filter_t *p_filter, picture_t *p_bgr )
 {
     assert( p_filter->fmt_out.video.i_chroma != VLC_CODEC_RGB24 );
 
@@ -1068,7 +1068,7 @@ picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic
 
     histogram_delete( &histo );
 
-    picture_t *p_out_tmp = BGR2Output( p_filter, p_bgr );
+    picture_t *p_out_tmp = picture_ConvertRGB24ToOutputFmt( p_filter, p_bgr );
     if( !p_out_tmp )
     {
         msg_Warn( p_filter, "Not enough memmory" );
