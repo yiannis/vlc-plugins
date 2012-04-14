@@ -74,7 +74,7 @@ static picture_t *Filter( filter_t *, picture_t * );
 static picture_t* picture_paintHistogramGREYfromPLANAR_YUV(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
 static picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
 static picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
-static int pictureYUVA_blend_toI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
 static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
 static picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr );
@@ -813,7 +813,7 @@ static inline uint8_t blend( uint8_t fg, uint8_t bg, uint8_t a )
 /// p_out  : I420 picture, the filter output
 /// x0,y0  : Where the top-left corner of p_histo should be placed
 ///          Should be multiples of '2'
-int pictureYUVA_blend_toI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
+int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
 {
     int a_pitch = p_histo->p[A_PLANE].i_pitch,
         y_pitch = p_histo->p[Y_PLANE].i_pitch,
@@ -1036,7 +1036,7 @@ picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pi
     histogram_rgb_paint_yuv( histo, p_yuva );
 
     // Blend the histogram image with the output picture
-    pictureYUVA_blend_toI420( p_outpic,
+    picture_YUVA_BlendToI420( p_outpic,
                               p_yuva,
                               histo->x0,
                               p_outpic->format.i_height-(histo->y0+p_yuva->format.i_height) );
