@@ -116,15 +116,15 @@ enum {
 };
 
 static int histogram_init( histogram_t **h_in, size_t num_bins, int height, int num_channels );
-static int histogram_fill_rgb( histogram_t *h, const picture_t *p_bgr );
-static int histogram_fill_yuv( histogram_t *h, const picture_t *p_yuv );
-static int histogram_fill_rgb_from_I420( histogram_t *h_rgb, const picture_t *p_yuv );
+static int histogram_rgb_fill( histogram_t *h, const picture_t *p_bgr );
+static int histogram_yuv_fill( histogram_t *h, const picture_t *p_yuv );
+static int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_update_max( histogram_t *h );
 static int histogram_delete( histogram_t **h );
 static int histogram_normalize( histogram_t *h, bool log, bool equalize );
-static int histogram_paint_rgb( histogram_t *h, picture_t *p_bgr );
-static int histogram_paint_yuv( histogram_t *h, picture_t *p_yuv );
-static int histogram_rgb_paint_yuv( histogram_t *histo, picture_t *p_yuv );
+static int histogram_rgb_paint( histogram_t *h, picture_t *p_bgr );
+static int histogram_yuv_paint( histogram_t *h, picture_t *p_yuv );
+static int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv );
 static int histogram_bins( int w );
 static int histogram_height_rgb( int h );
 static int histogram_height_yuv( int h );
@@ -476,7 +476,7 @@ int histogram_init( histogram_t **h_in, size_t num_bins, int height, int num_cha
 /// upsampled first (up-convertion to YUV4:4:4).
 /// Since we favour speed for accuracy, the Y-plane is downsampled instead.
 /// The loss of information should be negligible.
-int histogram_fill_rgb_from_I420( histogram_t *h_rgb, const picture_t *p_yuv )
+int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv )
 {
     if (!h_rgb || !p_yuv)
         return 1;
@@ -523,7 +523,7 @@ int histogram_fill_rgb_from_I420( histogram_t *h_rgb, const picture_t *p_yuv )
     return 0;
 }
 
-int histogram_fill_rgb( histogram_t *h, const picture_t *p_bgr )
+int histogram_rgb_fill( histogram_t *h, const picture_t *p_bgr )
 {
     if (!h)
         return 1;
@@ -546,7 +546,7 @@ int histogram_fill_rgb( histogram_t *h, const picture_t *p_bgr )
     return 0;
 }
 
-int histogram_fill_yuv( histogram_t *h, const picture_t *p_yuv )
+int histogram_yuv_fill( histogram_t *h, const picture_t *p_yuv )
 {
     if (!h)
         return 1;
@@ -654,7 +654,7 @@ inline int xy2lY(int x, int y, plane_t *plane)
       return (plane->i_visible_lines-y-1)*plane->i_pitch+x;
 }
 
-int histogram_paint_yuv( histogram_t *histo, picture_t *p_yuv )
+int histogram_yuv_paint( histogram_t *histo, picture_t *p_yuv )
 {
     int x0 = histo->x0,
         y0 = histo->y0;
@@ -715,7 +715,7 @@ inline uint8_t* xy2p(int x, int y, plane_t *plane)
 /// width = histo->num_bins + 1(shadow)
 /// height = 3*histo->height + 2*BOTTOM_MARGIN + 1(shadow)
 /// The picture dimentions should be even
-int histogram_rgb_paint_yuv( histogram_t *histo, picture_t *p_yuv )
+int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
 {
     const int yr0 = 1,
               yg0 = yr0 + histo->height + BOTTOM_MARGIN,
@@ -886,7 +886,7 @@ int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int 
     return 0;
 }
 
-int histogram_paint_rgb( histogram_t *histo, picture_t *p_bgr )
+int histogram_rgb_paint( histogram_t *histo, picture_t *p_bgr )
 {
     const int yr0 = histo->y0,
               yg0 = yr0 + histo->height + BOTTOM_MARGIN,
@@ -993,10 +993,10 @@ picture_t* picture_paintHistogramGREYfromPLANAR_YUV(filter_t *p_filter, picture_
 
     histogram_t *histo = NULL;
     histogram_init( &histo, num_bins, height, 1 );
-    histogram_fill_yuv( histo, p_yuv );
+    histogram_yuv_fill( histo, p_yuv );
     histogram_update_max( histo );
     histogram_normalize( histo, log, equalize );
-    histogram_paint_yuv( histo, p_yuv );
+    histogram_yuv_paint( histo, p_yuv );
     histogram_delete( &histo );
 
     return p_yuv;
@@ -1018,7 +1018,7 @@ picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pi
     histogram_init( &histo, num_bins, height, 3 );
 
     // Fill the histogram
-    histogram_fill_rgb_from_I420( histo, p_outpic );
+    histogram_rgb_fillFromI420( histo, p_outpic );
     histogram_update_max( histo );
     histogram_normalize( histo, log, equalize );
 
@@ -1033,7 +1033,7 @@ picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pi
     picture_t *p_yuva = picture_NewFromFormat( &fmt_yuva );
     picture_ZeroPixels( p_yuva );
     video_format_Clean( &fmt_yuva );
-    histogram_rgb_paint_yuv( histo, p_yuva );
+    histogram_rgb_paintToYUVA( histo, p_yuva );
 
     // Blend the histogram image with the output picture
     picture_YUVA_BlendToI420( p_outpic,
@@ -1061,10 +1061,10 @@ picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic
 
     histogram_t *histo = NULL;
     histogram_init( &histo, num_bins, height, 3 );
-    histogram_fill_rgb( histo, p_bgr );
+    histogram_rgb_fill( histo, p_bgr );
     histogram_update_max( histo );
     histogram_normalize( histo, log, equalize );
-    histogram_paint_rgb( histo, p_bgr );
+    histogram_rgb_paint( histo, p_bgr );
 
     histogram_delete( &histo );
 
