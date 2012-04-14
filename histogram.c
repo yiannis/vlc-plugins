@@ -71,9 +71,16 @@ static void Close     ( vlc_object_t * );
 
 static picture_t *Filter( filter_t *, picture_t * );
 
+static picture_t* picture_paintHistogramGREYfromPLANAR_YUV(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
+static picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
+static picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
+static int pictureYUVA_blend_toI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
 static picture_t* Input2BGR( filter_t *p_filter, picture_t *p_pic );
 static picture_t* BGR2Output( filter_t *p_filter, picture_t *p_bgr );
+static void picture_ZeroPixels( picture_t *p_pic );
 static void save_ppm( picture_t *p_bgr, const char *file );
+
 static inline int xy2lRGB(int x, int y, int c, plane_t *plane);
 static inline int xy2lY(int x, int y, plane_t *plane);
 static void dump_format( video_format_t *fmt );
@@ -121,9 +128,6 @@ static int histogram_rgb_paint_yuv( histogram_t *histo, picture_t *p_yuv );
 static int histogram_bins( int w );
 static int histogram_height_rgb( int h );
 static int histogram_height_yuv( int h );
-
-static int pictureYUVA_blend_toI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
-static void picture_ZeroPixels( picture_t *p_pic );
 
 static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
                      vlc_value_t oldval, vlc_value_t newval, void *p_data );
@@ -216,10 +220,7 @@ static void Close( vlc_object_t *p_this )
 static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
     bool draw, log, equalize, luminance;
-    picture_t *p_bgr = NULL,
-              *p_yuv = NULL,
-              *p_outpic = NULL;
-    histogram_t *histo = NULL;
+    picture_t *p_outpic = NULL;
 
     if( !p_pic ) return NULL;
 
@@ -232,104 +233,30 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         luminance = p_sys->luminance;
     vlc_mutex_unlock( &p_sys->lock );
 
-    if (!draw) {
-        p_outpic = filter_NewPicture( p_filter );
-        picture_Copy( p_outpic, p_pic );
-        picture_Release( p_pic );
-        return p_outpic;
-    }
-
-    if (luminance) {
-        p_yuv = filter_NewPicture( p_filter );
-        picture_Copy( p_yuv , p_pic );
-        picture_Release( p_pic );
-
-        int num_bins = histogram_bins( p_yuv->p[Y_PLANE].i_visible_pitch ),
-            height   = histogram_height_yuv( p_yuv->p[Y_PLANE].i_visible_lines );
-        if (num_bins*height == 0) {
-            msg_Warn( p_filter, "Not enough space to paint our historam :-(" );
-            return p_pic;
+    if (!draw) { // Return a simple copy of input
+        p_outpic = picture_CopyAndRelease(p_filter, p_pic);
+    } else if (luminance) { // Create a Luminance only histogram
+        switch (p_filter->fmt_in.i_codec) {
+            CASE_PLANAR_YUV
+                p_outpic = picture_paintHistogramGREYfromPLANAR_YUV(p_filter, p_pic, log, equalize);
+                break;
+            case VLC_CODEC_RGB24: //TODO
+            case VLC_CODEC_GREY:  //TODO
+            default:              //TODO
+                msg_Warn(p_filter, "Codec %4.4s currently not supported", (char *)&p_filter->fmt_in.i_codec);
+                p_outpic = picture_CopyAndRelease(p_filter, p_pic);
         }
-        histogram_init( &histo, num_bins, height, 1 );
-        histogram_fill_yuv( histo, p_yuv );
-        histogram_update_max( histo );
-        histogram_normalize( histo, log, equalize );
-        histogram_paint_yuv( histo, p_yuv );
-        histogram_delete( &histo );
-
-        p_outpic = p_yuv;
-    } else if (p_filter->fmt_in.i_codec == VLC_CODEC_I420) {
-        // Create the output picture and release the input
-        p_outpic = filter_NewPicture( p_filter );
-        picture_Copy( p_outpic, p_pic );
-        picture_Release( p_pic );
-
-        // Create an RGB histogram
-        int num_bins = histogram_bins( p_outpic->format.i_width ),
-            height   = histogram_height_rgb( p_outpic->format.i_height );
-        if (num_bins*height == 0) {
-            msg_Warn( p_filter, "Not enough space to paint our historam :-(" );
-            return NULL; //FIXME
+    } else { // Create a RGB histogram
+        switch (p_filter->fmt_in.i_codec) {
+            case VLC_CODEC_I420:
+                p_outpic = picture_paintHistogramRGBfromI420(p_filter, p_pic, log, equalize);
+                break;
+            case VLC_CODEC_YV12:  //TODO
+            case VLC_CODEC_RGB24: //TODO
+            case VLC_CODEC_GREY:  //TODO
+            default:
+                p_outpic = picture_paintHistogramRGBfromANY(p_filter, p_pic, log, equalize);
         }
-        histogram_init( &histo, num_bins, height, 3 );
-
-        // Fill the histogram
-        histogram_fill_rgb_from_I420( histo, p_outpic );
-        histogram_update_max( histo );
-        histogram_normalize( histo, log, equalize );
-
-        // Create a picture to hold the histogram
-        video_format_t fmt_yuva;
-        video_format_Init( &fmt_yuva, VLC_CODEC_YUVA );
-        fmt_yuva.i_width = num_bins+2;
-        fmt_yuva.i_height = 3*height + 2*BOTTOM_MARGIN + 1;
-        fmt_yuva.i_height += fmt_yuva.i_height%2==0 ? 0 : 1;
-        fmt_yuva.i_visible_width = fmt_yuva.i_width;
-        fmt_yuva.i_visible_height = fmt_yuva.i_height;
-        picture_t *p_yuva = picture_NewFromFormat( &fmt_yuva );
-        picture_ZeroPixels( p_yuva );
-        video_format_Clean( &fmt_yuva );
-        histogram_rgb_paint_yuv( histo, p_yuva );
-
-        // Blend the histogram image with the output picture
-        pictureYUVA_blend_toI420( p_outpic,
-                                  p_yuva,
-                                  histo->x0,
-                                  p_outpic->format.i_height-(histo->y0+p_yuva->format.i_height) );
-
-        histogram_delete( &histo );
-        picture_Release( p_yuva );
-    } else {
-        p_bgr = Input2BGR( p_filter, p_pic );
-
-        int num_bins = histogram_bins( p_bgr->p[RGB_PLANE].i_visible_pitch/3 ),
-            height   = histogram_height_rgb( p_bgr->p[RGB_PLANE].i_visible_lines );
-        if (num_bins*height == 0) {
-            msg_Warn( p_filter, "Not enough space to paint our historam :-(" );
-            return p_pic; //FIXME
-        }
-        histogram_init( &histo, num_bins, height, 3 );
-        histogram_fill_rgb( histo, p_bgr );
-        histogram_update_max( histo );
-        histogram_normalize( histo, log, equalize );
-        histogram_paint_rgb( histo, p_bgr );
-
-        histogram_delete( &histo );
-
-        p_yuv = BGR2Output( p_filter, p_bgr );
-        picture_Release( p_bgr );
-
-        p_outpic = filter_NewPicture( p_filter );
-        if( !p_outpic )
-        {
-            picture_Release( p_pic );
-            return NULL;
-        }
-        picture_CopyPixels( p_outpic, p_yuv );
-        picture_Release( p_yuv );
-
-        picture_CopyProperties( p_outpic, p_pic );
-        picture_Release( p_pic );
     }
 
     return p_outpic;
@@ -1042,6 +969,125 @@ void picture_ZeroPixels( picture_t *p_pic )
         int length = p_pic->p[i].i_lines * p_pic->p[i].i_pitch;
         memset( p_pic->p[i].p_pixels, 0, length );
     }
+}
+
+picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic)
+{
+    picture_t *p_outpic = filter_NewPicture( p_filter );
+    picture_Copy( p_outpic, p_pic );
+    picture_Release( p_pic );
+
+    return p_outpic;
+}
+
+picture_t* picture_paintHistogramGREYfromPLANAR_YUV(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize)
+{
+    int num_bins = histogram_bins( p_pic->p[Y_PLANE].i_visible_pitch ),
+        height   = histogram_height_yuv( p_pic->p[Y_PLANE].i_visible_lines );
+    if (num_bins*height == 0) {
+        msg_Warn( p_filter, "Not enough space to paint our historam :-(" );
+        return picture_CopyAndRelease(p_filter, p_pic);
+    }
+
+    picture_t *p_yuv = picture_CopyAndRelease(p_filter, p_pic);
+
+    histogram_t *histo = NULL;
+    histogram_init( &histo, num_bins, height, 1 );
+    histogram_fill_yuv( histo, p_yuv );
+    histogram_update_max( histo );
+    histogram_normalize( histo, log, equalize );
+    histogram_paint_yuv( histo, p_yuv );
+    histogram_delete( &histo );
+
+    return p_yuv;
+}
+
+picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize)
+{
+    int num_bins = histogram_bins( p_pic->format.i_width ),
+        height   = histogram_height_rgb( p_pic->format.i_height );
+    if (num_bins*height == 0) {
+        msg_Warn( p_filter, "Not enough space to paint our historam :-(" );
+        return picture_CopyAndRelease(p_filter, p_pic);
+    }
+
+    picture_t *p_outpic = picture_CopyAndRelease(p_filter, p_pic);
+
+    // Create an RGB histogram
+    histogram_t *histo = NULL;
+    histogram_init( &histo, num_bins, height, 3 );
+
+    // Fill the histogram
+    histogram_fill_rgb_from_I420( histo, p_outpic );
+    histogram_update_max( histo );
+    histogram_normalize( histo, log, equalize );
+
+    // Create a picture to hold the histogram
+    video_format_t fmt_yuva;
+    video_format_Init( &fmt_yuva, VLC_CODEC_YUVA );
+    fmt_yuva.i_width = num_bins+2;
+    fmt_yuva.i_height = 3*height + 2*BOTTOM_MARGIN + 1;
+    fmt_yuva.i_height += fmt_yuva.i_height%2==0 ? 0 : 1;
+    fmt_yuva.i_visible_width = fmt_yuva.i_width;
+    fmt_yuva.i_visible_height = fmt_yuva.i_height;
+    picture_t *p_yuva = picture_NewFromFormat( &fmt_yuva );
+    picture_ZeroPixels( p_yuva );
+    video_format_Clean( &fmt_yuva );
+    histogram_rgb_paint_yuv( histo, p_yuva );
+
+    // Blend the histogram image with the output picture
+    pictureYUVA_blend_toI420( p_outpic,
+                              p_yuva,
+                              histo->x0,
+                              p_outpic->format.i_height-(histo->y0+p_yuva->format.i_height) );
+
+    histogram_delete( &histo );
+    picture_Release( p_yuva );
+
+    return p_outpic;
+}
+
+picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize)
+{
+    picture_t *p_bgr = Input2BGR( p_filter, p_pic );
+
+    int num_bins = histogram_bins( p_bgr->p[RGB_PLANE].i_visible_pitch/3 ),
+        height   = histogram_height_rgb( p_bgr->p[RGB_PLANE].i_visible_lines );
+    if (num_bins*height == 0) {
+        msg_Warn( p_filter, "Not enough space to paint our historam :-(" );
+        picture_Release( p_bgr );
+        return picture_CopyAndRelease(p_filter, p_pic);
+    }
+
+    histogram_t *histo = NULL;
+    histogram_init( &histo, num_bins, height, 3 );
+    histogram_fill_rgb( histo, p_bgr );
+    histogram_update_max( histo );
+    histogram_normalize( histo, log, equalize );
+    histogram_paint_rgb( histo, p_bgr );
+
+    histogram_delete( &histo );
+
+    picture_t *p_out_tmp = BGR2Output( p_filter, p_bgr );
+    if( !p_out_tmp )
+    {
+        msg_Warn( p_filter, "Not enough memmory" );
+        picture_Release( p_bgr );
+        return picture_CopyAndRelease(p_filter, p_pic);
+    }
+    picture_Release( p_bgr );
+
+    // filter should always be able to return at most 3 pictures
+    picture_t *p_outpic = filter_NewPicture( p_filter );
+    assert( p_outpic != NULL );
+
+    picture_CopyPixels( p_outpic, p_out_tmp );
+    picture_Release( p_out_tmp );
+
+    picture_CopyProperties( p_outpic, p_pic );
+    picture_Release( p_pic );
+
+    return p_outpic;
 }
 
 void dump_format( video_format_t *fmt )
