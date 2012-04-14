@@ -79,7 +79,7 @@ static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
 static picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
 static picture_t* picture_ConvertRGB24ToOutputFmt( filter_t *p_filter, picture_t *p_bgr );
 static void picture_ZeroPixels( picture_t *p_pic );
-static void save_ppm( picture_t *p_bgr, const char *file );
+static void picture_SaveAsPPM( picture_t *p_bgr, const char *file );
 
 static inline int xy2lRGB(int x, int y, int c, plane_t *plane);
 static inline int xy2lY(int x, int y, plane_t *plane);
@@ -361,7 +361,7 @@ picture_t* picture_ConvertRGB24ToOutputFmt( filter_t *p_filter, picture_t *p_bgr
     return p_out;
 }
 
-void save_ppm( picture_t *p_bgr, const char *file )
+void picture_SaveAsPPM( picture_t *p_bgr, const char *file )
 {
     if (p_bgr->format.i_chroma != VLC_CODEC_RGB24)
         return;
