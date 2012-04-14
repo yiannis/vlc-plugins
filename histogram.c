@@ -307,18 +307,6 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
             break;
     }
 
-    switch (p_filter->fmt_in.video.i_chroma) {
-        CASE_PLANAR_YUV
-            break;
-        default:
-            // If the user asked for a luminance histogram
-            // and the codec is not planar, ignore user request
-            if (p_sys->luminance) {
-                p_sys->luminance = false;
-                msg_Warn( p_this, "Only planar YUV is suported" );
-            }
-            break;
-    }
     vlc_mutex_unlock( &p_sys->lock );
 
     return VLC_SUCCESS;
