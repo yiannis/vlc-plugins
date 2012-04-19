@@ -1,0 +1,14 @@
++ Add vlc options for:
+  - x0,y0
+  - transparency
+  - histogram height
+  - Select area (best to use zoom plugin)
+  - Move histogram around with mouse
++ Visual indication that equalization is on
++ Timer 4 benchmark/avg time on Close
++ Add support for YV12 (easy: switch UV planes on I420)
++ Optimizations
+  - Timer: paint on 15-30 fps max
+  - Sample input image 4x-20x(!?)
+  - Cache p_yuva in p_sys
++ Check coding standards, etc for inclusion in vlc git.

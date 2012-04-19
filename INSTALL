@@ -1,0 +1,14 @@
+NOTE: This software has only been tested on Ubuntu Linux.
+
+Just run:
+$ ./configure
+
+$ make
+
+$ make install
+or
+$ sudo make install
+
+This package depends on the vlc development files and pkg-config.
+Eg. on Ubuntu, install them with:
+$ sudo apt-get install libvlccore-dev pkg-config

@@ -21,22 +21,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-/* \todo {
- * + Add vlc options for:
- *   - x0,y0
- *   - transparency
- *   - hh
- *   - Select area
- * + Visual indication that equalization is on
- * + Timer 4 benchmark/avg time on Close
- * + Add support for YV12 (easy: switch UV planes on I420)
- * + Optimizations
- *   - Timer: paint on 15-30 fps max
- *   - Sample input image 4x-20x(!?)
- *   - Cache p_yuva in p_sys
- *  }
- */
-
 /*****************************************************************************
  * Preamble
  *****************************************************************************/

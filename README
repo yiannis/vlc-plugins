@@ -1,0 +1,8 @@
+A live histogram plugin for vlc.
+
+This software should be stable enough for general public usage.
+Although I still consider this as beta quality, mostly because
+some lack of features (see TODO).
+
+Usage:
+$ vlc --video-filter histogram <your_video_file>
