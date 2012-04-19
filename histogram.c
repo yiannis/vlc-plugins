@@ -270,6 +270,9 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
 
     uint32_t i_key32 = newval.i_int;
 
+    /* if we are disabled, ignore input key */
+    if (!p_sys->draw && i_key32 != KEY_HOME)
+        i_key32 = 0;
     /* first key-down for modifier-keys */
     switch (i_key32) {
         case KEY_HOME:
