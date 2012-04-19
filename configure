@@ -1,0 +1,13 @@
+#!/bin/bash
+
+VLC_VER=$(pkg-config --modversion vlc-plugin) || exit 1
+VLC_PREFIX=$(pkg-config --variable=prefix vlc-plugin)
+
+echo "Found vlc-${VLC_VER} installation at '${VLC_PREFIX}'"
+
+# Do some cleanup
+rm -f Makefile
+ln -s Makefile.static Makefile
+make clean
+
+echo -e "You can run:\n$ make && make install"

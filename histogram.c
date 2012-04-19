@@ -134,6 +134,7 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
 
 #define PDUMP( pic ) dump_picture( pic, #pic );
 #define DBG fprintf(stdout, "%s(): %03d survived!\n", __func__, __LINE__);
+#define N_( str ) str
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
