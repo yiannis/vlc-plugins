@@ -63,12 +63,14 @@ static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
 static picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
 static picture_t* picture_ConvertRGB24ToOutputFmt( filter_t *p_filter, picture_t *p_bgr );
 static void picture_ZeroPixels( picture_t *p_pic );
+#ifdef HISTOGRAM_DEBUG
 static void picture_SaveAsPPM( picture_t *p_bgr, const char *file );
+#endif
 
 static inline int xy2lRGB(int x, int y, int c, plane_t *plane);
 static inline int xy2lY(int x, int y, plane_t *plane);
+#ifdef HISTOGRAM_DEBUG
 static void dump_format( video_format_t *fmt );
-#if 0
 static void dump_picture( picture_t *p_pic, const char *name );
 #endif
 
@@ -90,7 +92,9 @@ typedef struct {
               num_channels,     ///< #of channels
               num_bins;         ///< The number of histogram bins
 } histogram_t;
+#ifdef HISTOGRAM_DEBUG
 static void dump_histogram( histogram_t *histo );
+#endif
 
 enum {
     Y = 0,
@@ -337,6 +341,7 @@ picture_t* picture_ConvertRGB24ToOutputFmt( filter_t *p_filter, picture_t *p_bgr
     return p_out;
 }
 
+#ifdef HISTOGRAM_DEBUG
 void picture_SaveAsPPM( picture_t *p_bgr, const char *file )
 {
     if (p_bgr->format.i_chroma != VLC_CODEC_RGB24)
@@ -365,6 +370,7 @@ void picture_SaveAsPPM( picture_t *p_bgr, const char *file )
 
     free( rgb_buf );
 }
+#endif
 
 /// Get the maximum allowed width of the histogram.
 /// Provided that there should be a left and right margin
@@ -463,11 +469,7 @@ int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv )
     int y_pitch = p_yuv->p[Y_PLANE].i_pitch,
         u_pitch = p_yuv->p[U_PLANE].i_pitch,
         v_pitch = p_yuv->p[V_PLANE].i_pitch,
-        y_visible_pitch = p_yuv->p[Y_PLANE].i_visible_pitch,
-        u_visible_pitch = p_yuv->p[U_PLANE].i_visible_pitch,
-        v_visible_pitch = p_yuv->p[V_PLANE].i_visible_pitch;
-    int u_margin = p_yuv->p[U_PLANE].i_pitch - p_yuv->p[U_PLANE].i_visible_pitch,
-        v_margin = p_yuv->p[V_PLANE].i_pitch - p_yuv->p[V_PLANE].i_visible_pitch;
+        y_visible_pitch = p_yuv->p[Y_PLANE].i_visible_pitch;
     uint8_t *y_start = p_yuv->p[Y_PLANE].p_pixels,
             *y_end = y_start + y_pitch * p_yuv->p[Y_PLANE].i_visible_lines,
             *u_start = p_yuv->p[U_PLANE].p_pixels,
@@ -478,9 +480,7 @@ int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv )
     while (y < y_end) {
         uint8_t *y_end_line = y+y_visible_pitch,
                 *y_next_line = y+2*h_sample*y_pitch,
-                *u_end_line = u+u_visible_pitch,
                 *u_next_line = u+h_sample*u_pitch,
-                *v_end_line = v+v_visible_pitch,
                 *v_next_line = v+h_sample*v_pitch;
         while (y < y_end_line) {
             yuv_to_rgb( &r, &g, &b, *y, *u, *v );
@@ -696,9 +696,6 @@ int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
     const int yr0 = 1,
               yg0 = yr0 + histo->height + BOTTOM_MARGIN,
               yb0 = yg0 + histo->height + BOTTOM_MARGIN;
-    uint8_t * const y_data = p_yuv->p[Y_PLANE].p_pixels,
-            * const u_data = p_yuv->p[U_PLANE].p_pixels,
-            * const v_data = p_yuv->p[V_PLANE].p_pixels;
 
 #define P_Y(x,y) xy2p( (x), (y), &p_yuv->p[Y_PLANE] )
 #define P_U(x,y) xy2p( (x), (y), &p_yuv->p[U_PLANE] )
@@ -712,7 +709,6 @@ int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
        const uint32_t jsb0 = (bin == histo->num_bins-1) ? 0 : histo->bins[B][bin+1]+1;
 
        const int x = bin;
-       int index_s;
 
        // Paint red bar
        for (uint32_t j = 0; j <= histo->bins[R][bin]; j++) {
@@ -1066,6 +1062,7 @@ picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic
     return p_outpic;
 }
 
+#ifdef HISTOGRAM_DEBUG
 void dump_format( video_format_t *fmt )
 {
     if (!fmt) {
@@ -1096,7 +1093,6 @@ void dump_histogram( histogram_t *histo )
     fclose( out );
 }
 
-#if 0
 void dump_picture( picture_t *p_pic, const char *name )
 {
     printf("%s {\n",name);

@@ -14,6 +14,6 @@
 
 + Inclusion in vlc git.
   - Check coding standards, etc.
-  - Fix compiler warnings
+  - Fix compiler warnings [OK]
   - Remove unneded code
-  - Use HISTOGRAM_DEBUG defines to hide debug code
+  - Use HISTOGRAM_DEBUG defines to hide debug code [OK]
