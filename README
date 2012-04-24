@@ -7,6 +7,16 @@ some lack of features (see TODO).
 Usage:
 $ vlc --video-filter histogram <your_video_file>
 
+The following keys are functional:
+
+[Delete]   : Hide histogram
+[Home]     : Show histogram (default on)
+[Page Up]  : Set logarithmic scale
+[Page Down]: Set linear scale (default on)
+[Enter]    : Toggle RGB/Luminance mode (default RGB)
+/          : Toggle R,G,B equalization on/off (default off)
+
+
 --
 Copyright 2009, 2012 Yiannis Belias
 Use under the GPLv2 or later, see COPYING.
