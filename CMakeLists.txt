@@ -1,0 +1,33 @@
+CMAKE_MINIMUM_REQUIRED(VERSION 2.6)
+
+PROJECT( histogram )
+
+SET( CMAKE_BUILD_TYPE "RelWithDebInfo" )
+
+FIND_PACKAGE( PkgConfig REQUIRED )
+PKG_CHECK_MODULES(VLC_PLUGIN REQUIRED vlc-plugin)
+EXECUTE_PROCESS( COMMAND pkg-config --variable=pluginsdir vlc-plugin
+                 COMMAND tr -d '\n'
+                 OUTPUT_VARIABLE VLC_PLUGINS_DIR
+)
+SET( HISTOGRAM_INSTALL_DIR "${VLC_PLUGINS_DIR}/video_filter" )
+
+# vlc module preprocessor flags
+SET( MODULE_CPPFLAGS
+  "-D__PLUGIN__ -DPIC -DMODULE_NAME=${CMAKE_PROJECT_NAME} -DMODULE_NAME_IS_${CMAKE_PROJECT_NAME} -DMODULE_STRING=\\\"${CMAKE_PROJECT_NAME}\\\""
+)
+SET( MODULE_CFLAGS
+  "-std=gnu99 -fPIC -Wall"
+  #"-std=gnu99 -pipe -fPIC -fvisibility=hidden -ffast-math -funroll-loops -fomit-frame-pointer -Wall"
+)
+
+SET( MODULE_CFLAGS_ALL "${MODULE_CPPFLAGS} ${MODULE_CFLAGS}" )
+
+INCLUDE_DIRECTORIES( ${VLC_PLUGIN_INCLUDE_DIRS} "." )
+LINK_DIRECTORIES( ${VLC_PLUGIN_LIBRARY_DIRS} )
+
+ADD_LIBRARY( histogram_plugin SHARED histogram.c )
+SET_TARGET_PROPERTIES( histogram_plugin PROPERTIES COMPILE_FLAGS ${MODULE_CFLAGS_ALL} )
+TARGET_LINK_LIBRARIES( histogram_plugin ${VLC_PLUGIN_LIBRARIES} "m" )
+
+INSTALL( TARGETS histogram_plugin DESTINATION ${HISTOGRAM_INSTALL_DIR} )
