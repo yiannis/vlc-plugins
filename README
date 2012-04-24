@@ -6,3 +6,12 @@ some lack of features (see TODO).
 
 Usage:
 $ vlc --video-filter histogram <your_video_file>
+
+--
+Copyright 2009, 2012 Yiannis Belias
+Use under the GPLv2 or later, see COPYING.
+--
+Yiannis Belias  <yiannisbe@gmail.com>              `
+Homepage [http://users.hol.gr/~jonnyb/video] '              .
+GNU+LINUX:                                            '           '
+In a world without fences who needs Gates?      .                     *
