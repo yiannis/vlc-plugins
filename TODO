@@ -6,7 +6,6 @@
   - Move histogram around with mouse
 + Visual indication that equalization is on
 + Timer 4 benchmark/avg time on Close
-+ Add support for YV12 (easy: switch UV planes on I420)
 + Optimizations
   - Timer: paint on 15-30 fps max
   - Sample input image 4x-20x(!?)
@@ -17,3 +16,4 @@
   - Fix compiler warnings [OK]
   - Remove unneded code
   - Use HISTOGRAM_DEBUG defines to hide debug code [OK]
++ Add support for YV12 (easy: switch UV planes on I420) [OK]

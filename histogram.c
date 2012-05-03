@@ -58,10 +58,11 @@ static picture_t *Filter( filter_t *, picture_t * );
 static picture_t* picture_paintHistogramGREYfromPLANAR_YUV(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
 static picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
 static picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
-static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0, bool switch_uv = false );
+static int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
-static picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
-static picture_t* picture_ConvertRGB24ToOutputFmt( filter_t *p_filter, picture_t *p_bgr );
+static picture_t* picture_ANY_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
+static picture_t* picture_RGB24_ConvertToOutputFmt( filter_t *p_filter, picture_t *p_bgr );
 static void picture_ZeroPixels( picture_t *p_pic );
 #ifdef HISTOGRAM_DEBUG
 static void picture_SaveAsPPM( picture_t *p_bgr, const char *file );
@@ -104,15 +105,16 @@ enum {
 };
 
 static int histogram_init( histogram_t **h_in, size_t num_bins, int height, int num_channels );
-static int histogram_rgb_fill( histogram_t *h, const picture_t *p_bgr );
-static int histogram_yuv_fill( histogram_t *h, const picture_t *p_yuv );
-static int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv );
+static int histogram_rgb_fillFromRGB24( histogram_t *h, const picture_t *p_bgr );
+static int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv = false );
+static int histogram_rgb_fillFromYV12( histogram_t *h_rgb, const picture_t *p_yuv );
+static int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv );
 static int histogram_update_max( histogram_t *h );
 static int histogram_delete( histogram_t **h );
 static int histogram_normalize( histogram_t *h, bool log, bool equalize );
-static int histogram_rgb_paint( histogram_t *h, picture_t *p_bgr );
-static int histogram_yuv_paint( histogram_t *h, picture_t *p_yuv );
+static int histogram_rgb_paintToRGB24( histogram_t *h, picture_t *p_bgr );
 static int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv );
+static int histogram_yuv_paint( histogram_t *h, picture_t *p_yuv );
 static int histogram_bins( int w );
 static int histogram_height_rgb( int h );
 static int histogram_height_yuv( int h );
@@ -177,6 +179,10 @@ static int Open( vlc_object_t *p_this )
 
     /*add key-pressed callback*/
     var_AddCallback( p_filter->p_libvlc, "key-pressed", KeyEvent, p_this );
+
+#ifdef HISTOGRAM_DEBUG
+    printf( "Codec: %4.4s detected\n", (char *)&p_filter->fmt_in.i_codec);
+#endif
 
     return VLC_SUCCESS;
 }
@@ -304,7 +310,7 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
     return VLC_SUCCESS;
 }
 
-picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic )
+picture_t* picture_ANY_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic )
 {
     if (p_pic->format.i_chroma == VLC_CODEC_RGB24)
         return p_pic;
@@ -325,7 +331,7 @@ picture_t* picture_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic )
     return p_bgr;
 }
 
-picture_t* picture_ConvertRGB24ToOutputFmt( filter_t *p_filter, picture_t *p_bgr )
+picture_t* picture_RGB24_ConvertToOutputFmt( filter_t *p_filter, picture_t *p_bgr )
 {
     assert( p_filter->fmt_out.video.i_chroma != VLC_CODEC_RGB24 );
 
@@ -458,22 +464,28 @@ int histogram_init( histogram_t **h_in, size_t num_bins, int height, int num_cha
 /// upsampled first (up-convertion to YUV4:4:4).
 /// Since we favour speed for accuracy, the Y-plane is downsampled instead.
 /// The loss of information should be negligible.
-int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv )
+///
+/// This function supports sampling on every ith row and jth column (w_sample, h_sample),
+/// but the functionality is not actually used.
+int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv )
 {
     if (!h_rgb || !p_yuv)
         return 1;
 
+    int u_plane, vplane;
+    u_plane = switch_uv ? V_PLANE : U_PLANE;
+    v_plane = switch_uv ? U_PLANE : V_PLANE;
     int w_sample = 1,
         h_sample = 1,
         r,g,b;
     int y_pitch = p_yuv->p[Y_PLANE].i_pitch,
-        u_pitch = p_yuv->p[U_PLANE].i_pitch,
-        v_pitch = p_yuv->p[V_PLANE].i_pitch,
+        u_pitch = p_yuv->p[u_plane].i_pitch,
+        v_pitch = p_yuv->p[v_plane].i_pitch,
         y_visible_pitch = p_yuv->p[Y_PLANE].i_visible_pitch;
     uint8_t *y_start = p_yuv->p[Y_PLANE].p_pixels,
             *y_end = y_start + y_pitch * p_yuv->p[Y_PLANE].i_visible_lines,
-            *u_start = p_yuv->p[U_PLANE].p_pixels,
-            *v_start = p_yuv->p[V_PLANE].p_pixels,
+            *u_start = p_yuv->p[u_plane].p_pixels,
+            *v_start = p_yuv->p[v_plane].p_pixels,
             *y = y_start, *u = u_start, *v = v_start;
     int shift = 8 - (int)round( log2(h_rgb->num_bins) ); ///< Right shift for pixel values when num_bins < 256
 
@@ -499,7 +511,12 @@ int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv )
     return 0;
 }
 
-int histogram_rgb_fill( histogram_t *h, const picture_t *p_bgr )
+int histogram_rgb_fillFromYV12( histogram_t *h_rgb, const picture_t *p_yuv )
+{
+    return histogram_rgb_fillFromI420( h_rgb, p_yuv, true );
+}
+
+int histogram_rgb_fillFromRGB24( histogram_t *h, const picture_t *p_bgr )
 {
     if (!h)
         return 1;
@@ -522,7 +539,7 @@ int histogram_rgb_fill( histogram_t *h, const picture_t *p_bgr )
     return 0;
 }
 
-int histogram_yuv_fill( histogram_t *h, const picture_t *p_yuv )
+int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv )
 {
     if (!h)
         return 1;
@@ -785,16 +802,19 @@ static inline uint8_t blend( uint8_t fg, uint8_t bg, uint8_t a )
 /// p_out  : I420 picture, the filter output
 /// x0,y0  : Where the top-left corner of p_histo should be placed
 ///          Should be multiples of '2'
-int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
+int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0, bool switch_uv )
 {
+    int u_plane, vplane;
+    u_plane = switch_uv ? V_PLANE : U_PLANE;
+    v_plane = switch_uv ? U_PLANE : V_PLANE;
     int a_pitch = p_histo->p[A_PLANE].i_pitch,
         y_pitch = p_histo->p[Y_PLANE].i_pitch,
         u_pitch = p_histo->p[U_PLANE].i_pitch,
         v_pitch = p_histo->p[V_PLANE].i_pitch,
         y_width = p_histo->p[Y_PLANE].i_visible_pitch,
         o_pitch = p_out->p[Y_PLANE].i_pitch,
-        uo_pitch = p_out->p[U_PLANE].i_pitch,
-        vo_pitch = p_out->p[V_PLANE].i_pitch;
+        uo_pitch = p_out->p[u_plane].i_pitch,
+        vo_pitch = p_out->p[v_plane].i_pitch;
     uint8_t ut1, ut2, ut3, ut4,
             vt1, vt2, vt3, vt4;
     uint8_t *y = p_histo->p[Y_PLANE].p_pixels,
@@ -802,8 +822,8 @@ int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int 
             *v = p_histo->p[V_PLANE].p_pixels,
             *a = p_histo->p[A_PLANE].p_pixels,
             *o = p_out->p[Y_PLANE].p_pixels + y0*o_pitch + x0,
-            *uo= p_out->p[U_PLANE].p_pixels + y0/2*uo_pitch + x0/2,
-            *vo= p_out->p[V_PLANE].p_pixels + y0/2*vo_pitch + x0/2;
+            *uo= p_out->p[u_plane].p_pixels + y0/2*uo_pitch + x0/2,
+            *vo= p_out->p[v_plane].p_pixels + y0/2*vo_pitch + x0/2;
     uint8_t *y_end = y + p_histo->p[Y_PLANE].i_visible_lines*y_pitch;
     uint8_t *y1, *y2, *y3, *y4,
             *u1, *u2, *u3, *u4,
@@ -858,7 +878,12 @@ int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int 
     return 0;
 }
 
-int histogram_rgb_paint( histogram_t *histo, picture_t *p_bgr )
+int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
+{
+    return picture_YUVA_BlendToI420( p_out, p_histo, x0, y0, true );
+}
+
+int histogram_rgb_paintToRGB24( histogram_t *histo, picture_t *p_bgr )
 {
     const int yr0 = histo->y0,
               yg0 = yr0 + histo->height + BOTTOM_MARGIN,
@@ -965,7 +990,7 @@ picture_t* picture_paintHistogramGREYfromPLANAR_YUV(filter_t *p_filter, picture_
 
     histogram_t *histo = NULL;
     histogram_init( &histo, num_bins, height, 1 );
-    histogram_yuv_fill( histo, p_yuv );
+    histogram_yuv_fillFromYUVPlanar( histo, p_yuv );
     histogram_update_max( histo );
     histogram_normalize( histo, log, equalize );
     histogram_yuv_paint( histo, p_yuv );
@@ -1021,7 +1046,7 @@ picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_t *p_pi
 
 picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize)
 {
-    picture_t *p_bgr = picture_ConvertToRGB24( p_filter, p_pic );
+    picture_t *p_bgr = picture_ANY_ConvertToRGB24( p_filter, p_pic );
 
     int num_bins = histogram_bins( p_bgr->p[RGB_PLANE].i_visible_pitch/3 ),
         height   = histogram_height_rgb( p_bgr->p[RGB_PLANE].i_visible_lines );
@@ -1033,14 +1058,14 @@ picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic
 
     histogram_t *histo = NULL;
     histogram_init( &histo, num_bins, height, 3 );
-    histogram_rgb_fill( histo, p_bgr );
+    histogram_rgb_fillFromRGB24( histo, p_bgr );
     histogram_update_max( histo );
     histogram_normalize( histo, log, equalize );
-    histogram_rgb_paint( histo, p_bgr );
+    histogram_rgb_paintToRGB24( histo, p_bgr );
 
     histogram_delete( &histo );
 
-    picture_t *p_out_tmp = picture_ConvertRGB24ToOutputFmt( p_filter, p_bgr );
+    picture_t *p_out_tmp = picture_RGB24_ConvertToOutputFmt( p_filter, p_bgr );
     if( !p_out_tmp )
     {
         msg_Warn( p_filter, "Not enough memmory" );
