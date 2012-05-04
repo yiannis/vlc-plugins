@@ -68,6 +68,7 @@ static void picture_ZeroPixels( picture_t *p_pic );
 static void picture_SaveAsPPM( picture_t *p_bgr, const char *file );
 #endif
 
+static inline uint32_t* xy_rgba2p(int x, int y, plane_t *plane);
 static inline int xy2lRGB(int x, int y, int c, plane_t *plane);
 static inline int xy2lY(int x, int y, plane_t *plane);
 #ifdef HISTOGRAM_DEBUG
@@ -113,10 +114,10 @@ static int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_y
 static int histogram_update_max( histogram_t *h );
 static int histogram_delete( histogram_t **h );
 static int histogram_normalize( histogram_t *h, bool log, bool equalize );
-static int histogram_rgb_paintToRGB24( histogram_t *h, picture_t *p_bgr ); //FIXME
+static int histogram_rgb_paintToRGBA( histogram_t *h, picture_t *p_bgr );
 static int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv );
-static int histogram_yuv_paintToYUVA( histogram_t *h, picture_t *p_yuv );
 static int histogram_yuv_paintToRGBA( histogram_t *h, picture_t *p_yuv );
+static int histogram_yuv_paintToYUVA( histogram_t *h, picture_t *p_yuv );
 static int histogram_yuv_paint( histogram_t *h, picture_t *p_yuv );
 static int histogram_bins( int w );
 static int histogram_height_rgb( int h );
@@ -834,11 +835,7 @@ int histogram_yuv_paintToYUVA( histogram_t *h, picture_t *p_yuv )
        // Paint bar
        for (uint32_t j = 0; j <= histo->bins[Y][bin]; j++) {
           int y = y0 + j;
-#ifdef HISTOGRAM_INVERT
-          *P_Y(x,y) = ~*P_Y(x,y);
-#else
           *P_Y(x,y) = MAX_PIXEL_VALUE;
-#endif
           *P_A(x,y) = HISTOGRAM_ALPHA;
        }
        // Drop shadow, 1 pel right - 1 pel below bar
@@ -858,7 +855,7 @@ int histogram_yuv_paintToYUVA( histogram_t *h, picture_t *p_yuv )
 }
 
 /// Return a pointer to the RGBA pixel channel
-inline uint8_t* xyca2p(int x, int y, int c, plane_t *plane)
+inline uint8_t* xyca2pc(int x, int y, int c, plane_t *plane)
 {
 #ifdef HISTOGRAM_DEBUG
    if (x>=plane->i_visible_pitch || y>=plane->i_visible_lines || c > 3) {
@@ -878,11 +875,15 @@ inline uint8_t* xyca2p(int x, int y, int c, plane_t *plane)
 int histogram_yuv_paintToRGBA( histogram_t *h, picture_t *p_bgra )
 {
     const int y0 = 1;
-
-#define A(x,y) xyca2p( (x), (y), 3, &p_bgra->p[RGB_PLANE] )
-#define R(x,y) xyca2p( (x), (y), 2, &p_bgra->p[RGB_PLANE] )
-#define G(x,y) xyca2p( (x), (y), 1, &p_bgra->p[RGB_PLANE] )
-#define B(x,y) xyca2p( (x), (y), 0, &p_bgra->p[RGB_PLANE] )
+    const uint32_t bright = MAX_PIXEL_VALUE<<24 |
+                            MAX_PIXEL_VALUE<<16 |
+                            MAX_PIXEL_VALUE<<8  |
+                            HISTOGRAM_ALPHA,
+                   grey   = SHADOW_PIXEL_VALUE<<24 |
+                            SHADOW_PIXEL_VALUE<<16 |
+                            SHADOW_PIXEL_VALUE<<8  |
+                            HISTOGRAM_ALPHA;
+#define P(x,y) xy_rgba2p( (x), (y), &p_bgra->p[RGB_PLANE] )
     /// For each bin in the histogram, paint a vertical bar
     for (int bin=0; bin < histo->num_bins; bin++) {
         // y-min for drop shaddow bar
@@ -892,35 +893,17 @@ int histogram_yuv_paintToRGBA( histogram_t *h, picture_t *p_bgra )
        // Paint bar
        for (uint32_t j = 0; j <= histo->bins[Y][bin]; j++) {
           int y = y0 + j;
-#ifdef HISTOGRAM_INVERT
-          *R(x,y) = ~*R(x,y);
-          *G(x,y) = ~*G(x,y);
-          *B(x,y) = ~*B(x,y);
-#else
-          *R(x,y) = MAX_PIXEL_VALUE;
-          *G(x,y) = MAX_PIXEL_VALUE;
-          *B(x,y) = MAX_PIXEL_VALUE;
-#endif
-          *A(x,y) = HISTOGRAM_ALPHA;
+          *P(x,y) = bright;
        }
        // Drop shadow, 1 pel right - 1 pel below bar
        for (uint32_t j = js0; j < histo->bins[Y][bin]; j++) {
           int y = y0 + j;
-          *R(x+1,y) = SHADOW_PIXEL_VALUE;
-          *G(x+1,y) = SHADOW_PIXEL_VALUE;
-          *B(x+1,y) = SHADOW_PIXEL_VALUE;
-          *A(x+1,y) = HISTOGRAM_ALPHA;
+          *P(x+1,y) = grey;
        }
        // Drop shadow under the next bar
-       *R(x+1,y0-1) = SHADOW_PIXEL_VALUE;
-       *G(x+1,y0-1) = SHADOW_PIXEL_VALUE;
-       *B(x+1,y0-1) = SHADOW_PIXEL_VALUE;
-       *A(x+1,y0-1) = HISTOGRAM_ALPHA;
+       *P(x+1,y0-1) = grey;
     }
-#undef A
-#undef R
-#undef G
-#undef B
+#undef P
 
     return 0;
 }
@@ -1019,79 +1002,90 @@ int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int 
     return picture_YUVA_BlendToI420( p_out, p_histo, x0, y0, true );
 }
 
-int histogram_rgb_paintToRGB24( histogram_t *histo, picture_t *p_bgr )
+/// Return a pointer to the RGBA pixel
+inline uint32_t* xy_rgba2p(int x, int y, plane_t *plane)
 {
-    const int yr0 = histo->y0,
+#ifdef HISTOGRAM_DEBUG
+   if (x>=plane->i_visible_pitch || y>=plane->i_visible_lines) {
+      printf("[%d,%d] {%dx%d}\n",x,y,plane->i_visible_pitch,plane->i_visible_lines);
+      fflush(stdout);
+      return NULL;
+   }
+#endif
+      return (uint32_t*)(plane->p_pixels + (plane->i_visible_lines-y-1)*plane->i_pitch + 4*x);
+}
+
+/// Paint an RGB histogram to a 32-bit RGBA picture.
+/// p_bgra is expected to be an RGBA picture, with enough space for:
+/// width = histo->num_bins + 1(shadow)
+/// height = 3*histo->height + 2*BOTTOM_MARGIN + 1(shadow)
+/// The picture dimentions should be even
+int histogram_rgb_paintToRGBA( histogram_t *histo, picture_t *p_bgra )
+{
+    const int yr0 = 1,
               yg0 = yr0 + histo->height + BOTTOM_MARGIN,
               yb0 = yg0 + histo->height + BOTTOM_MARGIN;
     uint8_t * const data = p_bgr->p[0].p_pixels;
 
-#define IDX(x,y,c) xy2lRGB( (x), (y), (c), &p_bgr->p[RGB_PLANE] )
+    const uint32_t red   = 0x0000FF00 | HISTOGRAM_ALPHA,
+                   green = 0x00FF0000 | HISTOGRAM_ALPHA,
+                   blue  = 0xFF000000 | HISTOGRAM_ALPHA,
+                   grey  = SHADOW_PIXEL_VALUE<<24 |
+                           SHADOW_PIXEL_VALUE<<16 |
+                           SHADOW_PIXEL_VALUE<<8  |
+                           HISTOGRAM_ALPHA;
+
+#define P(x,y) xy_rgba2p( (x), (y), &p_bgra->p[RGB_PLANE] )
     /// For each bin in the histogram, paint a vertical bar in R/G/B color
     for (int bin=0; bin < histo->num_bins; bin++) {
         // y-min for drop shaddow bar
-       const uint32_t jsr0 = (bin == histo->num_bins-1) ? 0 : histo->bins[R][bin+1]+1;
-       const uint32_t jsg0 = (bin == histo->num_bins-1) ? 0 : histo->bins[G][bin+1]+1;
-       const uint32_t jsb0 = (bin == histo->num_bins-1) ? 0 : histo->bins[B][bin+1]+1;
+        const uint32_t jsr0 = (bin == histo->num_bins-1) ? 0 : histo->bins[R][bin+1]+1;
+        const uint32_t jsg0 = (bin == histo->num_bins-1) ? 0 : histo->bins[G][bin+1]+1;
+        const uint32_t jsb0 = (bin == histo->num_bins-1) ? 0 : histo->bins[B][bin+1]+1;
 
-       const int x = histo->x0 + bin;
-       int index_s;
+        const int x = bin;
+        int index_s;
 
-       // Paint red bar
-       for (uint32_t j = 0; j <= histo->bins[R][bin]; j++) {
-          int y = yr0 + j;
-          int index = IDX(x, y, 2);
-          data[index] = MAX_PIXEL_VALUE;
-          if (data[index-1] > FLOOR_PIXEL_VALUE) data[index-1] -= FLOOR_PIXEL_VALUE; else data[index-1] = 0;
-          if (data[index-2] > FLOOR_PIXEL_VALUE) data[index-2] -= FLOOR_PIXEL_VALUE; else data[index-1] = 0;
-       }
-       // Drop shadow, 1 pel right - 1 pel below red bar
-       for (uint32_t j = jsr0; j < histo->bins[R][bin]; j++) {
-          int y = yr0 + j;
-          int index = IDX(x+1, y, 0);
-          data[index] = data[index+1] = data[index+2] = SHADOW_PIXEL_VALUE;
-       }
-       // Drop shadow under the next red bar
-       index_s = IDX(x+1, yr0-1, 0);
-       data[index_s] = data[index_s+1] = data[index_s+2] = SHADOW_PIXEL_VALUE;
+        // Paint red bar
+        for (uint32_t j = 0; j <= histo->bins[R][bin]; j++) {
+           int y = yr0 + j;
+           *P(x,y) = red;
+        }
+        // Drop shadow, 1 pel right - 1 pel below red bar
+        for (uint32_t j = jsr0; j < histo->bins[R][bin]; j++) {
+           int y = yr0 + j;
+           *P(x+1,y) = grey;
+        }
+        // Drop shadow under the next red bar
+        *P(x+1, yr0-1) = grey;
 
-       // Paint green bar
-       for (uint32_t j = 0; j <= histo->bins[G][bin]; j++) {
-          int y = yg0 + j;
-          int index = IDX(x, y, 1);
-          data[index] = MAX_PIXEL_VALUE;
-          if (data[index-1] > FLOOR_PIXEL_VALUE) data[index-1] -= FLOOR_PIXEL_VALUE; else data[index-1] = 0;
-          if (data[index+1] > FLOOR_PIXEL_VALUE) data[index+1] -= FLOOR_PIXEL_VALUE; else data[index+1] = 0;
-       }
-       // Drop shadow, 1 pel right - 1 pel below green bar
-       for (uint32_t j = jsg0; j < histo->bins[G][bin]; j++) {
-          int y = yg0 + j;
-          int index = IDX(x+1, y, 0);
-          data[index] = data[index+1] = data[index+2] = SHADOW_PIXEL_VALUE;
-       }
-       // Drop shadow under the next green bar
-       index_s = IDX(x+1, yg0-1, 0);
-       data[index_s] = data[index_s+1] = data[index_s+2] = SHADOW_PIXEL_VALUE;
+        // Paint green bar
+        for (uint32_t j = 0; j <= histo->bins[G][bin]; j++) {
+           int y = yg0 + j;
+           *P(x,y) = green;
+        }
+        // Drop shadow, 1 pel right - 1 pel below green bar
+        for (uint32_t j = jsg0; j < histo->bins[G][bin]; j++) {
+             int y = yg0 + j;
+            *P(x+1, y) = grey;
+        }
+        // Drop shadow under the next green bar
+        *P(x+1, yg0-1) = grey;
 
-       // Paint blue bar
-       for (uint32_t j=0; j <= histo->bins[B][bin]; j++) {
-          int y = yb0 + j;
-          int index = IDX(x, y, 0);
-          data[index] = MAX_PIXEL_VALUE;
-          if (data[index+1] > FLOOR_PIXEL_VALUE) data[index+1] -= FLOOR_PIXEL_VALUE; else data[index+1] = 0;
-          if (data[index+2] > FLOOR_PIXEL_VALUE) data[index+2] -= FLOOR_PIXEL_VALUE; else data[index+2] = 0;
-       }
-       // Drop shadow, 1 pel right - 1 pel below blue bar
-       for (uint32_t j = jsb0; j < histo->bins[B][bin]; j++) {
-          int y = yb0 + j;
-          int index = IDX(x+1, y, 0);
-          data[index] = data[index+1] = data[index+2] = SHADOW_PIXEL_VALUE;
-       }
-       // Drop shadow under the next blue bar
-       index_s = IDX(x+1, yb0-1, 0);
-       data[index_s] = data[index_s+1] = data[index_s+2] = SHADOW_PIXEL_VALUE;
+        // Paint blue bar
+        for (uint32_t j=0; j <= histo->bins[B][bin]; j++) {
+           int y = yb0 + j;
+           *P(x, y) = blue;
+        }
+        // Drop shadow, 1 pel right - 1 pel below blue bar
+        for (uint32_t j = jsb0; j < histo->bins[B][bin]; j++) {
+           int y = yb0 + j;
+           *P(x+1, y) = grey;
+        }
+        // Drop shadow under the next blue bar
+        *P(x+1, yb0-1) = grey;
     }
-#undef IDX
+#undef P
 
     return 0;
 }
