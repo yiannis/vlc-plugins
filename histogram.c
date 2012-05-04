@@ -108,12 +108,15 @@ static int histogram_init( histogram_t **h_in, size_t num_bins, int height, int 
 static int histogram_rgb_fillFromRGB24( histogram_t *h, const picture_t *p_bgr );
 static int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv = false );
 static int histogram_rgb_fillFromYV12( histogram_t *h_rgb, const picture_t *p_yuv );
+static int histogram_yuv_fillFromRGB24( histogram_t *h, const picture_t *p_bgr );
 static int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv );
 static int histogram_update_max( histogram_t *h );
 static int histogram_delete( histogram_t **h );
 static int histogram_normalize( histogram_t *h, bool log, bool equalize );
 static int histogram_rgb_paintToRGB24( histogram_t *h, picture_t *p_bgr );
 static int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv );
+static int histogram_yuv_paintToYUVA( histogram_t *h, picture_t *p_yuv ); //TODO
+static int histogram_yuv_paintToRGB24( histogram_t *h, picture_t *p_yuv ); //TODO
 static int histogram_yuv_paint( histogram_t *h, picture_t *p_yuv );
 static int histogram_bins( int w );
 static int histogram_height_rgb( int h );
@@ -554,6 +557,28 @@ int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv )
         const uint8_t const *end_visible = line+visible_pitch;
         for (uint8_t *pel = line; pel != end_visible; pel++)
             h->bins[Y][(*pel)>>shift]++;
+    }
+
+    return 0;
+}
+
+int histogram_yuv_fillFromRGB24( histogram_t *h, const picture_t *p_bgr )
+{
+    if (!h)
+        return 1;
+
+    int pitch = p_bgr->p[RGB_PLANE].i_pitch,                    ///< buffer line size in bytes
+        visible_pitch = p_bgr->p[RGB_PLANE].i_visible_pitch;    ///< buffer line size in bytes (visible)
+    uint8_t *start = p_bgr->p[RGB_PLANE].p_pixels,
+            *end = start + pitch * p_bgr->p[RGB_PLANE].i_visible_lines;
+
+    int shift = 8 - (int)round( log2(h->num_bins) ); ///< Right shift for pixel values when num_bins < 256
+    for (uint8_t *line = start; line != end; line += pitch) {
+        const uint8_t const *end_visible = line+visible_pitch;
+        for (uint8_t *pel = line; pel != end_visible; pel+=3) {
+            uint8_t y = ( ( (  66 * pel[2] + 129 * pel[1] +  25 * pel[0] + 128 ) >> 8 ) + 16 );
+            h->bins[Y][y>>shift]++;
+        }
     }
 
     return 0;
