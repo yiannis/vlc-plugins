@@ -115,7 +115,7 @@ static int histogram_delete( histogram_t **h );
 static int histogram_normalize( histogram_t *h, bool log, bool equalize );
 static int histogram_rgb_paintToRGB24( histogram_t *h, picture_t *p_bgr );
 static int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv );
-static int histogram_yuv_paintToYUVA( histogram_t *h, picture_t *p_yuv ); //TODO
+static int histogram_yuv_paintToYUVA( histogram_t *h, picture_t *p_yuv );
 static int histogram_yuv_paintToRGB24( histogram_t *h, picture_t *p_yuv ); //TODO
 static int histogram_yuv_paint( histogram_t *h, picture_t *p_yuv );
 static int histogram_bins( int w );
@@ -809,6 +809,49 @@ int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
 #undef P_Y
 #undef P_U
 #undef P_V
+#undef P_A
+
+    return 0;
+}
+
+/// Paint a Y histogram to a YUV picture.
+/// p_yuv is expected to be a YUVA planar picture, with enough space for:
+/// width = histo->num_bins + 1(shadow)
+/// height = histo->height + 1(shadow)
+/// The picture dimentions should be even
+int histogram_yuv_paintToYUVA( histogram_t *h, picture_t *p_yuv )
+{
+    const int y0 = 1;
+
+#define P_Y(x,y) xy2p( (x), (y), &p_yuv->p[Y_PLANE] )
+#define P_A(x,y) xy2p( (x), (y), &p_yuv->p[A_PLANE] )
+    /// For each bin in the histogram, paint a vertical bar in Y
+    for (int bin=0; bin < histo->num_bins; bin++) {
+        // y-min for drop shaddow bar
+       const uint32_t js0 = (bin == histo->num_bins-1) ? 0 : histo->bins[Y][bin+1]+1;
+       const int x = bin;
+
+       // Paint bar
+       for (uint32_t j = 0; j <= histo->bins[Y][bin]; j++) {
+          int y = y0 + j;
+#ifdef HISTOGRAM_INVERT
+          *P_Y(x,y) = ~*P_Y(x,y)
+#else
+          *P_Y(x,y) = MAX_PIXEL_VALUE;
+#endif
+          *P_A(x,y) = HISTOGRAM_ALPHA;
+       }
+       // Drop shadow, 1 pel right - 1 pel below bar
+       for (uint32_t j = js0; j < histo->bins[Y][bin]; j++) {
+          int y = y0 + j;
+          *P_Y(x+1,y) = SHADOW_PIXEL_VALUE;
+          *P_A(x+1,y) = HISTOGRAM_ALPHA;
+       }
+       // Drop shadow under the next red bar
+       *P_Y(x+1,yr0-1) = SHADOW_PIXEL_VALUE;
+       *P_A(x+1,y0-1) = HISTOGRAM_ALPHA;
+    }
+#undef P_Y
 #undef P_A
 
     return 0;
