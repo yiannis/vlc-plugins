@@ -61,6 +61,7 @@ static picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t
 static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0, bool switch_uv = false );
 static int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static int picture_RGBA_BlendToRGB24( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
 static picture_t* picture_ANY_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
 static picture_t* picture_RGB24_ConvertToOutputFmt( filter_t *p_filter, picture_t *p_bgr );
@@ -915,6 +916,51 @@ static inline uint8_t blend( uint8_t fg, uint8_t bg, uint8_t a )
 {
     return ( a * (fg-bg) + (bg<<8) )>>8;
 }
+
+int picture_RGBA_BlendToRGB24_32( picture_t *p_out, picture_t *p_histo, int x0, int y0, bool RGB24 )
+{
+    int bytes = RGB24 ? 3 : 4;
+    int h_pitch = p_histo->p[RGB_PLANE].i_pitch,
+        o_pitch = p_out->p[RGB_PLANE].i_pitch;
+    uint8_t *h = p_histo->p[RGB_PLANE].p_pixels,
+            *o = p_out->p[RGB_PLANE].p_pixels + y0*o_pitch + x0*bytes;
+    uint8_t *h_end = h + p_histo->p[RGB_PLANE].i_visible_lines*h_pitch;
+
+    while (h < h_end) {
+        uint8_t *h_line_end  = h + h_width;
+        uint8_t *h_line_next = h + h_pitch;
+        uint8_t *o_line_next = o + o_pitch;
+        while (h < h_line_end) {
+            *(o+0) = blend( *(h+0), *(o+0), *(h+3) );
+            *(o+1) = blend( *(h+1), *(o+1), *(h+3) );
+            *(o+2) = blend( *(h+2), *(o+2), *(h+3) );
+            h+=4; o+=bytes;
+        }
+        h = h_line_next;
+        o = o_line_next;
+    }
+
+    return 0;
+}
+
+/// Alpha blend an RGBA picture to an RGB24 picture.
+/// p_histo: RGBA picture, contains the histogram.
+/// p_out  : RGB24 picture, the filter output
+/// x0,y0  : Where the top-left corner of p_histo should be placed
+int picture_RGBA_BlendToRGB24( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
+{
+    return picture_RGBA_BlendToRGB24_32( p_out, p_histo, x0, y0, true );
+}
+
+/// Alpha blend an RGBA picture to an RGB32 picture.
+/// p_histo: RGBA picture, contains the histogram.
+/// p_out  : RGB32 picture, the filter output
+/// x0,y0  : Where the top-left corner of p_histo should be placed
+int picture_RGBA_BlendToRGB32( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
+{
+    return picture_RGBA_BlendToRGB24_32( p_out, p_histo, x0, y0, false );
+}
+
 /// Alpha blend a YUVA4:4:4 picture to a Y800 picture, ignoring UY planes.
 /// p_histo: YUVA planar picture, contains the histogram.
 ///          Dimentions should be multiples of '2'.
@@ -947,7 +993,6 @@ int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int 
 
     return 0;
 }
-
 
 /// Alpha blend a YUVA4:4:4 picture to a I420 picture.
 /// p_histo: YUVA planar picture, contains the histogram.
