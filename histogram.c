@@ -60,6 +60,7 @@ static picture_t* picture_paintHistogramRGBfromI420(filter_t *p_filter, picture_
 static picture_t* picture_paintHistogramRGBfromANY(filter_t *p_filter, picture_t *p_pic, bool log, bool equalize);
 static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0, bool switch_uv = false );
 static int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
 static picture_t* picture_ANY_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
 static picture_t* picture_RGB24_ConvertToOutputFmt( filter_t *p_filter, picture_t *p_bgr );
@@ -914,6 +915,39 @@ static inline uint8_t blend( uint8_t fg, uint8_t bg, uint8_t a )
 {
     return ( a * (fg-bg) + (bg<<8) )>>8;
 }
+/// Alpha blend a YUVA4:4:4 picture to a Y800 picture, ignoring UY planes.
+/// p_histo: YUVA planar picture, contains the histogram.
+///          Dimentions should be multiples of '2'.
+/// p_out  : Y800 picture, the filter output
+/// x0,y0  : Where the top-left corner of p_histo should be placed
+int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
+{
+    int a_pitch = p_histo->p[A_PLANE].i_pitch,
+        y_pitch = p_histo->p[Y_PLANE].i_pitch,
+        y_width = p_histo->p[Y_PLANE].i_visible_pitch,
+        o_pitch = p_out->p[Y_PLANE].i_pitch;
+    uint8_t *y = p_histo->p[Y_PLANE].p_pixels,
+            *a = p_histo->p[A_PLANE].p_pixels,
+            *o = p_out->p[Y_PLANE].p_pixels + y0*o_pitch + x0;
+    uint8_t *y_end = y + p_histo->p[Y_PLANE].i_visible_lines*y_pitch;
+
+    while (y < y_end) {
+        uint8_t *y_line_end = y+y_width;
+        uint8_t *y_line_next = y + y_pitch;
+        uint8_t *a_line_next = a + a_pitch;
+        uint8_t *o_line_next = o + o_pitch;
+        while (y < y_line_end) {
+            *o = blend( *y, *o, *a );
+            y++; a++; o++;
+        }
+        y = y_line_next;
+        a = a_line_next;
+        o = o_line_next;
+    }
+
+    return 0;
+}
+
 
 /// Alpha blend a YUVA4:4:4 picture to a I420 picture.
 /// p_histo: YUVA planar picture, contains the histogram.
