@@ -74,14 +74,15 @@ static void dump_format( video_format_t *fmt );
 static void dump_picture( picture_t *p_pic, const char *name );
 #endif
 
-static const uint8_t MAX_PIXEL_VALUE    = 255; ///< Support only 8-bit per channel picture_t
-static const uint8_t SHADOW_PIXEL_VALUE = 10;  ///< The value of the drop-shadow pixels
-static const uint8_t FLOOR_PIXEL_VALUE  = 100; ///< Maximum allowed channel value for painted pixels
-static const int     RGB_PLANE          = 0;   ///< The RGB plane offset in array picture_t::p[]
-static const int     LEFT_MARGIN        = 20;
-static const int     BOTTOM_MARGIN      = 10;
-static const int     HISTOGRAM_HEIGHT   = 50;  ///< Default histogram height
-static const int     HISTOGRAM_ALPHA    = 150; ///< Default alpha value
+static const uint8_t MAX_PIXEL_VALUE        = 255; ///< Support only 8-bit per channel picture_t
+static const uint8_t SHADOW_PIXEL_VALUE     = 10;  ///< The value of the drop-shadow pixels
+static const uint8_t FLOOR_PIXEL_VALUE      = 100; ///< Maximum allowed channel value for painted pixels
+static const int     RGB_PLANE              = 0;   ///< The RGB plane offset in array picture_t::p[]
+static const int     LEFT_MARGIN            = 20;
+static const int     BOTTOM_MARGIN          = 10;
+static const int     HISTOGRAM_HEIGHT       = 50;  ///< Default histogram height
+static const int     HISTOGRAM_MIN_HEIGHT   = 50;  ///< Default histogram height
+static const int     HISTOGRAM_ALPHA        = 150; ///< Default alpha value
 
 // Return values
 static const int     HIST_SUCCESS           = -0;
@@ -182,6 +183,8 @@ struct filter_sys_t
                     log,         ///< Weather to use a logarithmic scale
                     draw;        ///< Whether to draw the histogram
     histo_type_e    type;        ///< Toggle between Y or RGB histogram
+    int             frame_id,    ///< The frame ID (count from '0')
+                    n_skip;      ///< Skip n frames (the histogram calculations)
     vlc_mutex_t     lock;        ///< To lock for read/write on picture
     histogram_t*    p_histo;     ///< The histogram
 };
@@ -206,6 +209,8 @@ static int Open( vlc_object_t *p_this )
     p_filter->p_sys->log        = false;
     p_filter->p_sys->draw       = true;
     p_filter->p_sys->type       = HISTO_RGB;
+    p_filter->p_sys->frame_id   = 0;
+    p_filter->p_sys->n_skip     = 1;
     p_filter->p_sys->p_histo    = NULL;
 
     /*create mutex*/
@@ -252,6 +257,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     bool draw, log, equalize,
          fill = true, paint = true, blend = true;
     histo_type_e type;
+    int frame_id, n_skip;
     int status = HIST_SUCCESS;
 
     if( !p_pic ) return NULL;
@@ -263,8 +269,14 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         log = p_sys->log;
         equalize = p_sys->equalize;
         type = p_sys->type;
+        frame_id = p_sys->frame_id++;
+        n_skip = p_sys->n_skip;
     vlc_mutex_unlock( &p_sys->lock );
 
+    if (frame_id%n_skip != 0) {
+        fill = false;
+        paint = false;
+    }
     // In any case, create a simple copy of input
     picture_t *p_outpic = picture_CopyAndRelease(p_filter, p_pic);
 
@@ -346,6 +358,33 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
         i_key32 = 0;
     /* first key-down for modifier-keys */
     switch (i_key32) {
+        case '1':
+            p_sys->n_skip = 1;
+            break;
+        case '2':
+            p_sys->n_skip = 2;
+            break;
+        case '3':
+            p_sys->n_skip = 3;
+            break;
+        case '4':
+            p_sys->n_skip = 4;
+            break;
+        case '5':
+            p_sys->n_skip = 5;
+            break;
+        case '6':
+            p_sys->n_skip = 6;
+            break;
+        case '7':
+            p_sys->n_skip = 7;
+            break;
+        case '8':
+            p_sys->n_skip = 8;
+            break;
+        case '9':
+            p_sys->n_skip = 9;
+            break;
         case KEY_HOME:
             p_sys->draw = true;
             break;
