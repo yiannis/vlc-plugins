@@ -1,3 +1,5 @@
++ BUG? log mode seems to have a min ~= 15 pixels
++ BUG? B&G do not seem to have bottom shadows
 + Add vlc options for:
   - x0,y0
   - transparency
