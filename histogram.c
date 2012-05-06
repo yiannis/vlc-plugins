@@ -47,7 +47,7 @@
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-#define HISTOGRAM_INVERT
+// #define HISTOGRAM_DEBUG
 #define MAX_NUM_CHANNELS 4   ///< Expect max of 4 channels
 
 static int  Open      ( vlc_object_t * );
@@ -125,7 +125,8 @@ typedef enum {
 
 static int histogram_init( histogram_t **h_in, picture_t *p_in, histo_type_e type );
 static int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec );
-static int histogram_init_picture( histogram_t *h );
+static int histogram_init_picture_yuva( histogram_t *h );
+static int histogram_init_picture_rgba( histogram_t *h );
 static int histogram_rgb_fillFromRGB24( histogram_t *h, const picture_t *p_bgr );
 static int histogram_rgb_fillFromRGB32( histogram_t *h, const picture_t *p_bgr );
 static int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv );
@@ -276,7 +277,6 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
                     status =  histogram_init( &p_sys->p_histo, p_pic, HISTO_RGB );
                     status += histogram_set_codec( p_sys->p_histo, p_filter->fmt_in.i_codec );
-                    status += histogram_init_picture( p_sys->p_histo );
                 }
                 if (fill) {
                     histogram_fill( p_sys->p_histo, p_outpic );
@@ -294,7 +294,6 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
                     status =  histogram_init( &p_sys->p_histo, p_pic, HISTO_Y );
                     status += histogram_set_codec( p_sys->p_histo, p_filter->fmt_in.i_codec );
-                    status += histogram_init_picture( p_sys->p_histo );
                 }
                 if (fill) {
                     histogram_fill( p_sys->p_histo, p_outpic );
@@ -545,81 +544,121 @@ int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec )
                 h->fill_func  = &histogram_yuv_fillFromYUVPlanar;
                 h->paint_func = &histogram_yuv_paintToYUVA;
                 h->blend_func = &picture_YUVA_BlendToY800;
+                histogram_init_picture_yuva( h );
                 break;
             case VLC_CODEC_RGB24:
                 h->fill_func  = histogram_yuv_fillFromRGB24;
                 h->paint_func = histogram_yuv_paintToRGBA;
                 h->blend_func = picture_RGBA_BlendToRGB24;
+                histogram_init_picture_rgba( h );
             case VLC_CODEC_RGB32:
                 h->fill_func  = histogram_yuv_fillFromRGB32;
                 h->paint_func = histogram_yuv_paintToRGBA;
                 h->blend_func = picture_RGBA_BlendToRGB32;
+                histogram_init_picture_rgba( h );
             default:              //TODO
                 status = HIST_CODEC_UNSUPPORTED;
         }
     } else {
         // Create an RGB histogram
         switch (i_codec) {
-           case VLC_CODEC_I420:
-              h->fill_func  = histogram_rgb_fillFromI420;
-              h->paint_func = histogram_rgb_paintToYUVA;
-              h->blend_func = picture_YUVA_BlendToI420;
-              break;
+            case VLC_CODEC_I420:
+                h->fill_func  = histogram_rgb_fillFromI420;
+                h->paint_func = histogram_rgb_paintToYUVA;
+                h->blend_func = picture_YUVA_BlendToI420;
+                histogram_init_picture_yuva( h );
+                break;
             case VLC_CODEC_YV12:
-              h->fill_func  = histogram_rgb_fillFromYV12;
-              h->paint_func = histogram_rgb_paintToYUVA;
-              h->blend_func = picture_YUVA_BlendToYV12;
-              break;
+                h->fill_func  = histogram_rgb_fillFromYV12;
+                h->paint_func = histogram_rgb_paintToYUVA;
+                h->blend_func = picture_YUVA_BlendToYV12;
+                histogram_init_picture_yuva( h );
+                break;
             case VLC_CODEC_RGB24:
-              h->fill_func  = histogram_rgb_fillFromRGB24;
-              h->paint_func = histogram_rgb_paintToRGBA;
-              h->blend_func = picture_RGBA_BlendToRGB24;
-              break;
+                h->fill_func  = histogram_rgb_fillFromRGB24;
+                h->paint_func = histogram_rgb_paintToRGBA;
+                h->blend_func = picture_RGBA_BlendToRGB24;
+                histogram_init_picture_rgba( h );
+                break;
             case VLC_CODEC_RGB32:
-              h->fill_func  = histogram_rgb_fillFromRGB32;
-              h->paint_func = histogram_rgb_paintToRGBA;
-              h->blend_func = picture_RGBA_BlendToRGB32;
-              break;
+                h->fill_func  = histogram_rgb_fillFromRGB32;
+                h->paint_func = histogram_rgb_paintToRGBA;
+                h->blend_func = picture_RGBA_BlendToRGB32;
+                histogram_init_picture_rgba( h );
+                break;
             case VLC_CODEC_GREY:
-              status = HIST_COLOR_UNSUPPORTED;
-              break;
+                status = HIST_COLOR_UNSUPPORTED;
+                break;
             default:              //TODO
-                status = HIST_CODEC_UNSUPPORTED;
+                 status = HIST_CODEC_UNSUPPORTED;
         }
     }
 
     return status;
 }
 
-/// Create the histogram overlay picture.
-int histogram_init_picture( histogram_t *h )
+/// Create the YUVA histogram overlay picture.
+int histogram_init_picture_yuva( histogram_t *h )
 {
     int status = HIST_SUCCESS;
+    int histo_height;
 
-    if (h->num_channels == 1) {
-    // Create a Luminance histogram
-        video_format_t fmt_yuva;
-        video_format_Init( &fmt_yuva, VLC_CODEC_YUVA );
-        fmt_yuva.i_width = h->num_bins + 1 + 1; //+1(shadow) +1(even)
-        fmt_yuva.i_height = h->height + 1;
-        fmt_yuva.i_height += fmt_yuva.i_height%2==0 ? 0 : 1;
-        fmt_yuva.i_visible_width = fmt_yuva.i_width;
-        fmt_yuva.i_visible_height = fmt_yuva.i_height;
-        h->p_overlay = picture_NewFromFormat( &fmt_yuva );
-        video_format_Clean( &fmt_yuva );
-    } else {
-    // Create an RGB histogram
-        video_format_t fmt_rgba;
-        video_format_Init( &fmt_rgba, VLC_CODEC_RGBA );
-        fmt_rgba.i_width = h->num_bins+2;
-        fmt_rgba.i_height = 3*h->height + 2*BOTTOM_MARGIN + 1;
-        fmt_rgba.i_height += fmt_rgba.i_height%2==0 ? 0 : 1;
-        fmt_rgba.i_visible_width = fmt_rgba.i_width;
-        fmt_rgba.i_visible_height = fmt_rgba.i_height;
-        h->p_overlay = picture_NewFromFormat( &fmt_rgba );
-        video_format_Clean( &fmt_rgba );
+    switch (h->num_channels) {
+        case 3:
+            histo_height = 3*h->height + 2*BOTTOM_MARGIN + 1;
+            break;
+        case 1:
+            histo_height = h->height + 1;
+            break;
+        default:
+            return HIST_INPUT_ERROR;
     }
-    picture_ZeroPixels( h->p_overlay );
+
+    video_format_t fmt_yuva;
+    video_format_Init( &fmt_yuva, VLC_CODEC_YUVA );
+    fmt_yuva.i_width = h->num_bins + 1 + 1; //+1(shadow) +1(even)
+    fmt_yuva.i_height = histo_height;
+    fmt_yuva.i_height += fmt_yuva.i_height%2==0 ? 0 : 1;
+    fmt_yuva.i_visible_width = fmt_yuva.i_width;
+    fmt_yuva.i_visible_height = fmt_yuva.i_height;
+#ifdef HISTOGRAM_DEBUG
+    dump_format(&fmt_yuva);
+#endif
+    h->p_overlay = picture_NewFromFormat( &fmt_yuva );
+    video_format_Clean( &fmt_yuva );
+
+    return status;
+}
+
+/// Create the RGBA histogram overlay picture.
+int histogram_init_picture_rgba( histogram_t *h )
+{
+    int status = HIST_SUCCESS;
+    int histo_height;
+
+    switch (h->num_channels) {
+        case 3:
+            histo_height = 3*h->height + 2*BOTTOM_MARGIN + 1;
+            break;
+        case 1:
+            histo_height = h->height + 1;
+            break;
+        default:
+            return HIST_INPUT_ERROR;
+    }
+
+    video_format_t fmt_rgba;
+    video_format_Init( &fmt_rgba, VLC_CODEC_RGBA );
+    fmt_rgba.i_width = h->num_bins+2;
+    fmt_rgba.i_height = histo_height;
+    fmt_rgba.i_height += fmt_rgba.i_height%2==0 ? 0 : 1;
+    fmt_rgba.i_visible_width = fmt_rgba.i_width;
+    fmt_rgba.i_visible_height = fmt_rgba.i_height;
+#ifdef HISTOGRAM_DEBUG
+    dump_format(&fmt_rgba);
+#endif
+    h->p_overlay = picture_NewFromFormat( &fmt_rgba );
+    video_format_Clean( &fmt_rgba );
 
     return status;
 }
@@ -1054,6 +1093,8 @@ int histogram_yuv_paintToRGBA( histogram_t *histo, picture_t *p_bgra )
 
 int histogram_paint( histogram_t *h )
 {
+    picture_ZeroPixels( h->p_overlay );
+
     return h->paint_func( h, h->p_overlay );
 }
 
@@ -1244,7 +1285,8 @@ int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int 
 
 int histogram_blend( histogram_t *h, picture_t *p_out )
 {
-    return h->blend_func( p_out, h->p_overlay, h->x0, h->y0 );
+    int yt = p_out->format.i_height-(h->y0+h->p_overlay->format.i_height);
+    return h->blend_func( p_out, h->p_overlay, h->x0, yt );
 }
 
 /// Return a pointer to the RGBA pixel
@@ -1358,11 +1400,11 @@ void dump_format( video_format_t *fmt )
         return;
     }
 
-    printf("%dx%d@%dbpp [%d]\n",
+    printf("%dx%d@%dbpp [%4.4s]\n",
            fmt->i_width,
            fmt->i_height,
            fmt->i_bits_per_pixel,
-           fmt->i_chroma);
+           (char *)&fmt->i_chroma);
 }
 
 void dump_histogram( histogram_t *histo )
