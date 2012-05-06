@@ -88,6 +88,7 @@ static const int     HIST_SUCCESS           = -0;
 static const int     HIST_CODEC_UNSUPPORTED = -1;
 static const int     HIST_COLOR_UNSUPPORTED = -2;
 static const int     HIST_INPUT_ERROR       = -3;
+static const int     HIST_ERROR             = -4;
 
 typedef struct histogram_t histogram_t;
 typedef int (*f_fill)( histogram_t*, const picture_t*);
@@ -462,8 +463,8 @@ static int histogram_bins( int width )
 static int histogram_height_rgb( int height )
 {
     int free_height = (height - 4*BOTTOM_MARGIN) / 3;
-    if (free_height < BOTTOM_MARGIN)
-        return 0;
+    if (free_height < HISTOGRAM_MIN_HEIGHT)
+        return HIST_ERROR;
 
     return free_height > HISTOGRAM_HEIGHT ? HISTOGRAM_HEIGHT : free_height;
 }
@@ -471,8 +472,8 @@ static int histogram_height_rgb( int height )
 static int histogram_height_yuv( int height )
 {
     int free_height = (height - 2*BOTTOM_MARGIN);
-    if (free_height < BOTTOM_MARGIN)
-        return 0;
+    if (free_height < HISTOGRAM_MIN_HEIGHT)
+        return HIST_ERROR;
 
     return free_height > HISTOGRAM_HEIGHT ? HISTOGRAM_HEIGHT : free_height;
 }
@@ -679,7 +680,7 @@ int histogram_init_picture_rgba( histogram_t *h )
 int histogram_rgb_fillFromYUV422( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv )
 {
     if (!h_rgb || !p_yuv)
-        return 1;
+        return HIST_INPUT_ERROR;
 
     int u_plane, v_plane;
     u_plane = switch_uv ? V_PLANE : U_PLANE;
@@ -717,7 +718,7 @@ int histogram_rgb_fillFromYUV422( histogram_t *h_rgb, const picture_t *p_yuv, bo
         v = v_next_line;
     }
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv )
@@ -767,7 +768,7 @@ int histogram_rgb_fillFromRGB24_32( histogram_t *h, const picture_t *p_bgr, bool
 int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv )
 {
     if (!h)
-        return 1;
+        return HIST_INPUT_ERROR;
 
     int pitch = p_yuv->p[Y_PLANE].i_pitch,                    ///< buffer line size in bytes
         visible_pitch = p_yuv->p[Y_PLANE].i_visible_pitch;    ///< buffer line size in bytes (visible)
@@ -781,7 +782,7 @@ int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv )
             h->bins[Y][(*pel)>>shift]++;
     }
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 int histogram_yuv_fillFromRGB24_32( histogram_t *h, const picture_t *p_bgr, bool rgb24 )
@@ -825,7 +826,7 @@ int histogram_fill( histogram_t *h, const picture_t *p_in )
 int histogram_update_max( histogram_t *h )
 {
     if (!h)
-        return 1;
+        return HIST_INPUT_ERROR;
 
     //Reset max[i]
     for (int i=0; i<MAX_NUM_CHANNELS; i++)
@@ -839,7 +840,7 @@ int histogram_update_max( histogram_t *h )
             if (value > h->max[i]) h->max[i] = value;
         }
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 int histogram_free( histogram_t **h )
@@ -874,7 +875,7 @@ int histogram_normalize( histogram_t *h, bool log, bool equalize )
     uint32_t height = h->height;
 
     if (!h)
-        return 1;
+        return HIST_INPUT_ERROR;
 
     if (log)
         for (int i=0; i<h->num_channels; i++)
@@ -897,7 +898,7 @@ int histogram_normalize( histogram_t *h, bool log, bool equalize )
     for (int i=0; i<h->num_channels; i++)
         h->max[i] = height-1;
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 inline uint8_t* xy2p(int x, int y, plane_t *plane)
@@ -995,7 +996,7 @@ int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
 #undef P_V
 #undef P_A
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 /// Paint a Y histogram to a YUV picture.
@@ -1034,7 +1035,7 @@ int histogram_yuv_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
 #undef P_Y
 #undef P_A
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 /// Return a pointer to the RGBA pixel channel
@@ -1088,7 +1089,7 @@ int histogram_yuv_paintToRGBA( histogram_t *histo, picture_t *p_bgra )
     }
 #undef P
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 int histogram_paint( histogram_t *h )
@@ -1129,7 +1130,7 @@ int picture_RGBA_BlendToRGB24_32( picture_t *p_out, picture_t *p_histo, int x0, 
         o = o_line_next;
     }
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 /// Alpha blend an RGBA picture to an RGB24 picture.
@@ -1180,7 +1181,7 @@ int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int 
         o = o_line_next;
     }
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 /// Generic YUVA to YUV4:2:2 blend function.
@@ -1258,7 +1259,7 @@ int picture_YUVA_BlendToYUV422( picture_t *p_out, picture_t *p_histo, int x0, in
         vo = vo_line_next;
     }
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 /// Alpha blend a YUVA4:4:4 picture to a I420 picture.
@@ -1372,7 +1373,7 @@ int histogram_rgb_paintToRGBA( histogram_t *histo, picture_t *p_bgra )
     }
 #undef P
 
-    return 0;
+    return HIST_SUCCESS;
 }
 
 void picture_ZeroPixels( picture_t *p_pic )
