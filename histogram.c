@@ -1010,7 +1010,7 @@ int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
        // Drop shadow under the next green bar
        rgb_to_yuv( P_Y(x+1,yg0-1), P_U(x+1,yg0-1), P_V(x+1,yg0-1),
                    SHADOW_PIXEL_VALUE, SHADOW_PIXEL_VALUE, SHADOW_PIXEL_VALUE );
-       *P_A(x+1,yr0-1) = HISTOGRAM_ALPHA;
+       *P_A(x+1,yg0-1) = HISTOGRAM_ALPHA;
 
        // Paint blue bar
        for (uint32_t j=0; j <= histo->bins[B][bin]; j++) {
@@ -1028,7 +1028,7 @@ int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
        // Drop shadow under the next blue bar
        rgb_to_yuv( P_Y(x+1,yb0-1), P_U(x+1,yb0-1), P_V(x+1,yb0-1),
                    SHADOW_PIXEL_VALUE, SHADOW_PIXEL_VALUE, SHADOW_PIXEL_VALUE );
-       *P_A(x+1,yr0-1) = HISTOGRAM_ALPHA;
+       *P_A(x+1,yb0-1) = HISTOGRAM_ALPHA;
     }
 #undef P_Y
 #undef P_U
