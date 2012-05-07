@@ -6,14 +6,15 @@
   - Move histogram around with mouse
 + Visual indication that equalization is on
 + Timer 4 benchmark/avg time on Close
-+ Add support for YV12 (easy: switch UV planes on I420)
 + Optimizations
+  - Use premultiplied alpha for p_overlay
   - Timer: paint on 15-30 fps max
   - Sample input image 4x-20x(!?)
-  - Cache p_yuva in p_sys
+  - Cache p_overlay in p_sys->histogram [OK]
 
 + Inclusion in vlc git.
   - Check coding standards, etc.
   - Fix compiler warnings [OK]
   - Remove unneded code
   - Use HISTOGRAM_DEBUG defines to hide debug code [OK]
++ Add support for YV12 (easy: switch UV planes on I420) [OK]
