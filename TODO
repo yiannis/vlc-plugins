@@ -1,4 +1,3 @@
-+ BUG? log mode seems to have a min ~= 15 pixels
 + Add vlc options for:
   - x0,y0
   - transparency
@@ -19,3 +18,4 @@
   - Use HISTOGRAM_DEBUG defines to hide debug code [OK]
 + Add support for YV12 (easy: switch UV planes on I420) [OK]
 + BUG? B&G do not seem to have bottom shadows [OK]
++ BUG? log mode seems to have a min ~= 15 pixels [OK]

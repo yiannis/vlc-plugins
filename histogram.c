@@ -149,6 +149,7 @@ static int histogram_bins( int w );
 static int histogram_height_rgb( int h );
 static int histogram_height_yuv( int h );
 static int histogram_fill( histogram_t *h, const picture_t *p_in );
+static int histogram_zero( histogram_t *h );
 static int histogram_paint( histogram_t *h );
 static int histogram_blend( histogram_t *h, picture_t *p_out );
 
@@ -292,6 +293,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                     status += histogram_set_codec( p_sys->p_histo, p_filter->fmt_in.i_codec );
                 }
                 if (fill) {
+                    histogram_zero( p_sys->p_histo );
                     histogram_fill( p_sys->p_histo, p_outpic );
                     histogram_update_max( p_sys->p_histo );
                     histogram_normalize( p_sys->p_histo, log, equalize );
@@ -309,6 +311,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                     status += histogram_set_codec( p_sys->p_histo, p_filter->fmt_in.i_codec );
                 }
                 if (fill) {
+                    histogram_zero( p_sys->p_histo );
                     histogram_fill( p_sys->p_histo, p_outpic );
                     histogram_update_max( p_sys->p_histo );
                     histogram_normalize( p_sys->p_histo, log, equalize );
@@ -860,6 +863,12 @@ int histogram_yuv_fillFromRGB32( histogram_t *h, const picture_t *p_bgr )
 int histogram_fill( histogram_t *h, const picture_t *p_in )
 {
     return h->fill_func( h, p_in );
+}
+
+int histogram_zero( histogram_t *h )
+{
+    for (int i=0; i<h->num_channels; i++)
+        memset( h->bins[i], 0, h->num_bins*sizeof(uint32_t) );
 }
 
 int histogram_update_max( histogram_t *h )
