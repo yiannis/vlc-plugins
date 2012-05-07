@@ -149,7 +149,7 @@ static int histogram_bins( int w );
 static int histogram_height_rgb( int h );
 static int histogram_height_yuv( int h );
 static int histogram_fill( histogram_t *h, const picture_t *p_in );
-static int histogram_zero( histogram_t *h );
+static void histogram_zero( histogram_t *h );
 static int histogram_paint( histogram_t *h );
 static int histogram_blend( histogram_t *h, picture_t *p_out );
 
@@ -185,7 +185,7 @@ struct filter_sys_t
                     draw;        ///< Whether to draw the histogram
     histo_type_e    type;        ///< Toggle between Y or RGB histogram
     int             frame_id,    ///< The frame ID (count from '0')
-                    n_skip;      ///< Skip n frames (the histogram calculations)
+                    n_skip;      ///< Skip (the histogram calculations) by n frames
     vlc_mutex_t     lock;        ///< To lock for read/write on picture
     histogram_t*    p_histo;     ///< The histogram
 };
@@ -211,7 +211,7 @@ static int Open( vlc_object_t *p_this )
     p_filter->p_sys->draw       = true;
     p_filter->p_sys->type       = HISTO_RGB;
     p_filter->p_sys->frame_id   = 0;
-    p_filter->p_sys->n_skip     = 1;
+    p_filter->p_sys->n_skip     = 0;
     p_filter->p_sys->p_histo    = NULL;
 
     /*create mutex*/
@@ -274,7 +274,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         n_skip = p_sys->n_skip;
     vlc_mutex_unlock( &p_sys->lock );
 
-    if (frame_id%n_skip != 0) {
+    if (frame_id%(n_skip+1) != 0) {
         fill = false;
         paint = false;
     }
@@ -361,6 +361,9 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
         i_key32 = 0;
     /* first key-down for modifier-keys */
     switch (i_key32) {
+        case '0':
+            p_sys->n_skip = 0;
+            break;
         case '1':
             p_sys->n_skip = 1;
             break;
@@ -865,7 +868,7 @@ int histogram_fill( histogram_t *h, const picture_t *p_in )
     return h->fill_func( h, p_in );
 }
 
-int histogram_zero( histogram_t *h )
+void histogram_zero( histogram_t *h )
 {
     for (int i=0; i<h->num_channels; i++)
         memset( h->bins[i], 0, h->num_bins*sizeof(uint32_t) );
