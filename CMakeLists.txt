@@ -2,7 +2,7 @@ CMAKE_MINIMUM_REQUIRED(VERSION 2.6)
 
 PROJECT( histogram )
 
-SET( CMAKE_BUILD_TYPE "RelWithDebInfo" )
+SET( CMAKE_BUILD_TYPE "Release" )
 
 FIND_PACKAGE( PkgConfig REQUIRED )
 PKG_CHECK_MODULES(VLC_PLUGIN REQUIRED vlc-plugin)
@@ -10,18 +10,30 @@ EXECUTE_PROCESS( COMMAND pkg-config --variable=pluginsdir vlc-plugin
                  COMMAND tr -d '\n'
                  OUTPUT_VARIABLE VLC_PLUGINS_DIR
 )
+EXECUTE_PROCESS( COMMAND pkg-config --cflags vlc-plugin
+                 COMMAND tr -d '\n'
+                 OUTPUT_VARIABLE VLC_PLUGIN_CPP_FLAGS
+)
 SET( HISTOGRAM_INSTALL_DIR "${VLC_PLUGINS_DIR}/video_filter" )
 
 # vlc module preprocessor flags
 SET( MODULE_CPPFLAGS
-  "-D__PLUGIN__ -DPIC -DMODULE_NAME=${CMAKE_PROJECT_NAME} -DMODULE_NAME_IS_${CMAKE_PROJECT_NAME} -DMODULE_STRING=\\\"${CMAKE_PROJECT_NAME}\\\""
+  "-DPIC -DMODULE_NAME=${CMAKE_PROJECT_NAME} -DMODULE_NAME_IS_${CMAKE_PROJECT_NAME} -DMODULE_STRING=\\\"${CMAKE_PROJECT_NAME}\\\" ${VLC_PLUGIN_CPP_FLAGS}"
 )
+# vlc module C flags
 SET( MODULE_CFLAGS
   "-std=gnu99 -fPIC -Wall"
-  #"-std=gnu99 -pipe -fPIC -fvisibility=hidden -ffast-math -funroll-loops -fomit-frame-pointer -Wall"
+)
+# vlc module additional optimization C flags
+SET( MODULE_CFLAGS_OPTIMIZE
+  "-pipe -fvisibility=hidden -ffast-math -funroll-loops -fomit-frame-pointer"
 )
 
-SET( MODULE_CFLAGS_ALL "${MODULE_CPPFLAGS} ${MODULE_CFLAGS}" )
+IF(CMAKE_BUILD_TYPE STREQUAL "Release")
+  SET( MODULE_CFLAGS_ALL "${MODULE_CPPFLAGS} ${MODULE_CFLAGS} ${MODULE_CFLAGS_OPTIMIZE}" )
+ELSE()
+  SET( MODULE_CFLAGS_ALL "${MODULE_CPPFLAGS} ${MODULE_CFLAGS}" )
+ENDIF()
 
 INCLUDE_DIRECTORIES( ${VLC_PLUGIN_INCLUDE_DIRS} "." )
 LINK_DIRECTORIES( ${VLC_PLUGIN_LIBRARY_DIRS} )
