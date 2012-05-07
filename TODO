@@ -7,9 +7,10 @@
 + Visual indication that equalization is on
 + Timer 4 benchmark/avg time on Close
 + Optimizations
+  - Use premultiplied alpha for p_overlay
   - Timer: paint on 15-30 fps max
   - Sample input image 4x-20x(!?)
-  - Cache p_yuva in p_sys
+  - Cache p_overlay in p_sys->histogram [OK]
 
 + Inclusion in vlc git.
   - Check coding standards, etc.
@@ -17,5 +18,3 @@
   - Remove unneded code
   - Use HISTOGRAM_DEBUG defines to hide debug code [OK]
 + Add support for YV12 (easy: switch UV planes on I420) [OK]
-+ BUG? B&G do not seem to have bottom shadows [OK]
-+ BUG? log mode seems to have a min ~= 15 pixels [OK]
