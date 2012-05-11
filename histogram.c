@@ -589,6 +589,7 @@ int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec )
             case VLC_CODEC_YV9:
             case VLC_CODEC_YV12:
             case VLC_CODEC_I420:
+            case VLC_CODEC_J420: /*same as I420*/
             case VLC_CODEC_NV12:
             case VLC_CODEC_NV21:
             case VLC_CODEC_GREY:  /*Y800,Y8*/
@@ -614,6 +615,7 @@ int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec )
         /*Create an RGB histogram*/
         switch (i_codec) {
             case VLC_CODEC_I420:
+            case VLC_CODEC_J420:
                 h->fill_func  = histogram_rgb_fillFromI420;
                 h->paint_func = histogram_rgb_paintToYUVA;
                 h->blend_func = picture_YUVA_BlendToI420;
