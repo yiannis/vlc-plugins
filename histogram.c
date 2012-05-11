@@ -56,7 +56,9 @@ static void Close     ( vlc_object_t * );
 static picture_t *Filter( filter_t *, picture_t * );
 
 static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static int picture_YUVA_BlendToI422( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static int picture_YUVA_BlendToYV16( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_RGBA_BlendToRGB24( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_RGBA_BlendToRGB32( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
@@ -132,7 +134,9 @@ static int histogram_init_picture_rgba( histogram_t *h );
 static int histogram_rgb_fillFromRGB24( histogram_t *h, const picture_t *p_bgr );
 static int histogram_rgb_fillFromRGB32( histogram_t *h, const picture_t *p_bgr );
 static int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv );
+static int histogram_rgb_fillFromI422( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_rgb_fillFromYV12( histogram_t *h_rgb, const picture_t *p_yuv );
+static int histogram_rgb_fillFromYV16( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_rgb_fillFromRGB24_32( histogram_t *h, const picture_t *p_bgr, bool rgb24 );
 static int histogram_rgb_fillFromYUV420( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv );
 static int histogram_yuv_fillFromRGB24( histogram_t *h, const picture_t *p_bgr );
@@ -590,6 +594,8 @@ int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec )
             case VLC_CODEC_YV12:
             case VLC_CODEC_I420:
             case VLC_CODEC_J420: /*same as I420*/
+            case VLC_CODEC_I422:
+            case VLC_CODEC_J422: /*same as I422*/
             case VLC_CODEC_NV12:
             case VLC_CODEC_NV21:
             case VLC_CODEC_GREY:  /*Y800,Y8*/
@@ -614,6 +620,13 @@ int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec )
     } else {
         /*Create an RGB histogram*/
         switch (i_codec) {
+            case VLC_CODEC_I422:
+            case VLC_CODEC_J422:
+                h->fill_func  = histogram_rgb_fillFromI422;
+                h->paint_func = histogram_rgb_paintToYUVA;
+                h->blend_func = picture_YUVA_BlendToI422;
+                histogram_init_picture_yuva( h );
+                break;
             case VLC_CODEC_I420:
             case VLC_CODEC_J420:
                 h->fill_func  = histogram_rgb_fillFromI420;
@@ -717,6 +730,57 @@ int histogram_init_picture_rgba( histogram_t *h )
 }
 
 /**
+ * Fill an RGB histogram, directly from a YUV4:2:2 picture.
+ * Supports I422/J422 & YV16 codecs.
+ *
+ * Normally, since each line on the UV plane is 2x subsampled, it should be
+ * upsampled first (up-convertion to YUV4:4:4).
+ * Since we favour speed for accuracy, the Y-plane is downsampled instead.
+ * The loss of information should be negligible.
+ */
+int histogram_rgb_fillFromYUV422( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv )
+{
+    if (!h_rgb || !p_yuv)
+        return HIST_INPUT_ERROR;
+
+    int u_plane, v_plane;
+    u_plane = switch_uv ? V_PLANE : U_PLANE;
+    v_plane = switch_uv ? U_PLANE : V_PLANE;
+    int r,g,b;
+    int y_pitch = p_yuv->p[Y_PLANE].i_pitch,
+        u_pitch = p_yuv->p[u_plane].i_pitch,
+        v_pitch = p_yuv->p[v_plane].i_pitch,
+        y_visible_pitch = p_yuv->p[Y_PLANE].i_visible_pitch;
+    uint8_t *y_start = p_yuv->p[Y_PLANE].p_pixels,
+            *y_end = y_start + y_pitch * p_yuv->p[Y_PLANE].i_visible_lines,
+            *u_start = p_yuv->p[u_plane].p_pixels,
+            *v_start = p_yuv->p[v_plane].p_pixels,
+            *y = y_start, *u = u_start, *v = v_start;
+    int shift = 8 - (int)round( log2(h_rgb->num_bins) ); /**< Right shift for pixel values when num_bins < 256 */
+
+    while (y < y_end) {
+        uint8_t *y_end_line = y+y_visible_pitch,
+                *y_next_line = y+y_pitch,
+                *u_next_line = u+u_pitch,
+                *v_next_line = v+v_pitch;
+        while (y < y_end_line) {
+            yuv_to_rgb( &r, &g, &b, *y, *u, *v );
+            h_rgb->bins[R][r>>shift]++;
+            h_rgb->bins[G][g>>shift]++;
+            h_rgb->bins[B][b>>shift]++;
+            y+=2;
+            u++;
+            v++;
+        }
+        y = y_next_line;
+        u = u_next_line;
+        v = v_next_line;
+    }
+
+    return HIST_SUCCESS;
+}
+
+/**
  * Fill an RGB histogram, directly from a YUV4:2:0 picture.
  * Supports I420 & YV12 codecs.
  *
@@ -772,6 +836,16 @@ int histogram_rgb_fillFromYUV420( histogram_t *h_rgb, const picture_t *p_yuv, bo
     }
 
     return HIST_SUCCESS;
+}
+
+int histogram_rgb_fillFromI422( histogram_t *h_rgb, const picture_t *p_yuv )
+{
+    return histogram_rgb_fillFromYUV422( h_rgb, p_yuv, false );
+}
+
+int histogram_rgb_fillFromYV16( histogram_t *h_rgb, const picture_t *p_yuv )
+{
+    return histogram_rgb_fillFromYUV422( h_rgb, p_yuv, true );
 }
 
 int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv )
@@ -1264,6 +1338,80 @@ int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int 
     return HIST_SUCCESS;
 }
 
+/** Generic YUVA to YUV4:2:2 blend function.
+ *
+ * Supports I422(with switch_uv=false) & YV16(with switch_uv=true)
+ */
+int picture_YUVA_BlendToYUV422( picture_t *p_out, picture_t *p_histo, int x0, int y0, bool switch_uv )
+{
+    int u_plane, v_plane;
+    u_plane = switch_uv ? V_PLANE : U_PLANE;
+    v_plane = switch_uv ? U_PLANE : V_PLANE;
+    int a_pitch = p_histo->p[A_PLANE].i_pitch,
+        y_pitch = p_histo->p[Y_PLANE].i_pitch,
+        u_pitch = p_histo->p[U_PLANE].i_pitch,
+        v_pitch = p_histo->p[V_PLANE].i_pitch,
+        y_width = p_histo->p[Y_PLANE].i_visible_pitch,
+        o_pitch = p_out->p[Y_PLANE].i_pitch,
+        uo_pitch = p_out->p[u_plane].i_pitch,
+        vo_pitch = p_out->p[v_plane].i_pitch;
+    uint8_t ut1, ut2,
+            vt1, vt2;
+    uint8_t *y = p_histo->p[Y_PLANE].p_pixels,
+            *u = p_histo->p[U_PLANE].p_pixels,
+            *v = p_histo->p[V_PLANE].p_pixels,
+            *a = p_histo->p[A_PLANE].p_pixels,
+            *o = p_out->p[Y_PLANE].p_pixels + y0*o_pitch + x0,
+            *uo= p_out->p[u_plane].p_pixels + y0*uo_pitch + x0/2,
+            *vo= p_out->p[v_plane].p_pixels + y0*vo_pitch + x0/2;
+    uint8_t *y_end = y + p_histo->p[Y_PLANE].i_visible_lines*y_pitch;
+    uint8_t *y1, *y2,
+            *u1, *u2,
+            *v1, *v2,
+            *a1, *a2,
+            *o1, *o2;
+
+    while (y < y_end) {
+        uint8_t *y_line_end = y+y_width;
+        uint8_t *y_line_next = y + y_pitch;
+        uint8_t *u_line_next = u + u_pitch;
+        uint8_t *v_line_next = v + v_pitch;
+        uint8_t *a_line_next = a + a_pitch;
+        uint8_t *o_line_next = o + o_pitch;
+        uint8_t *uo_line_next = uo + uo_pitch;
+        uint8_t *vo_line_next = vo + vo_pitch;
+        while (y < y_line_end) {
+            y1 = y; y2 = y+1;
+            u1 = u; u2 = u+1;
+            v1 = v; v2 = v+1;
+            a1 = a; a2 = a+1;
+            o1 = o; o2 = o+1;
+            *o1 = blend( *y1, *o1, *a1 );
+            *o2 = blend( *y2, *o2, *a2 );
+
+            ut1 = blend( *u1, *uo, *a1 );
+            ut2 = blend( *u2, *uo, *a2 );
+            *uo = (ut1+ut2)/2;
+
+            vt1 = blend( *v1, *vo, *a1 );
+            vt2 = blend( *v2, *vo, *a2 );
+            *vo = (vt1+vt2)/2;
+
+            y+=2; u+=2; v+=2; a+=2; o+=2;
+            uo++; vo++;
+        }
+        y = y_line_next;
+        u = u_line_next;
+        v = v_line_next;
+        a = a_line_next;
+        o = o_line_next;
+        uo = uo_line_next;
+        vo = vo_line_next;
+    }
+
+    return HIST_SUCCESS;
+}
+
 /** Generic YUVA to YUV4:2:0 blend function.
  *
  * Supports I420(with switch_uv=true) & YV12(with switch_uv=true)
@@ -1342,6 +1490,36 @@ int picture_YUVA_BlendToYUV420( picture_t *p_out, picture_t *p_histo, int x0, in
     }
 
     return HIST_SUCCESS;
+}
+
+/**
+ * Alpha blend a YUVA4:4:4 picture to a I422 picture.
+ *
+ * p_histo: YUVA planar picture, contains the histogram.
+ *          Dimentions should be multiples of '2'.
+ * p_out  : I422 picture, the filter output
+ * x0,y0  : Where the top-left corner of p_histo should be placed
+ *          Should be multiples of '2'
+ */
+int picture_YUVA_BlendToI422( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
+{
+    return picture_YUVA_BlendToYUV422( p_out, p_histo, x0, y0, false );
+}
+
+/**
+ * Alpha blend a YUVA4:4:4 picture to a YV16 picture.
+ *
+ * p_histo: YUVA planar picture, contains the histogram.
+ *          Dimentions should be multiples of '2'.
+ * p_out  : YV16 picture, the filter output
+ * x0,y0  : Where the top-left corner of p_histo should be placed
+ *          Should be multiples of '2'
+ *
+ * NOTE: YV16 seems to not be supported by VLC.
+ */
+int picture_YUVA_BlendToYV16( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
+{
+    return picture_YUVA_BlendToYUV422( p_out, p_histo, x0, y0, true );
 }
 
 /**
