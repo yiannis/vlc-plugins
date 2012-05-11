@@ -134,7 +134,7 @@ static int histogram_rgb_fillFromRGB32( histogram_t *h, const picture_t *p_bgr )
 static int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_rgb_fillFromYV12( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_rgb_fillFromRGB24_32( histogram_t *h, const picture_t *p_bgr, bool rgb24 );
-static int histogram_rgb_fillFromYUV422( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv );
+static int histogram_rgb_fillFromYUV420( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv );
 static int histogram_yuv_fillFromRGB24( histogram_t *h, const picture_t *p_bgr );
 static int histogram_yuv_fillFromRGB32( histogram_t *h, const picture_t *p_bgr );
 static int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv );
@@ -717,7 +717,7 @@ int histogram_init_picture_rgba( histogram_t *h )
 }
 
 /**
- * Fill an RGB histogram, directly from a YUV4:2:2 picture.
+ * Fill an RGB histogram, directly from a YUV4:2:0 picture.
  * Supports I420 & YV12 codecs.
  *
  * I420 & IYUV are said to be the identical:
@@ -730,7 +730,7 @@ int histogram_init_picture_rgba( histogram_t *h )
  *
  * This function supports sampling on every ith row and jth column (w_sample, h_sample),
  * but the functionality is not actually used. */
-int histogram_rgb_fillFromYUV422( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv )
+int histogram_rgb_fillFromYUV420( histogram_t *h_rgb, const picture_t *p_yuv, bool switch_uv )
 {
     if (!h_rgb || !p_yuv)
         return HIST_INPUT_ERROR;
@@ -776,12 +776,12 @@ int histogram_rgb_fillFromYUV422( histogram_t *h_rgb, const picture_t *p_yuv, bo
 
 int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv )
 {
-    return histogram_rgb_fillFromYUV422( h_rgb, p_yuv, false );
+    return histogram_rgb_fillFromYUV420( h_rgb, p_yuv, false );
 }
 
 int histogram_rgb_fillFromYV12( histogram_t *h_rgb, const picture_t *p_yuv )
 {
-    return histogram_rgb_fillFromYUV422( h_rgb, p_yuv, true );
+    return histogram_rgb_fillFromYUV420( h_rgb, p_yuv, true );
 }
 
 int histogram_rgb_fillFromRGB24( histogram_t *h, const picture_t *p_bgr )
@@ -1264,11 +1264,11 @@ int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int 
     return HIST_SUCCESS;
 }
 
-/** Generic YUVA to YUV4:2:2 blend function.
+/** Generic YUVA to YUV4:2:0 blend function.
  *
  * Supports I420(with switch_uv=true) & YV12(with switch_uv=true)
  */
-int picture_YUVA_BlendToYUV422( picture_t *p_out, picture_t *p_histo, int x0, int y0, bool switch_uv )
+int picture_YUVA_BlendToYUV420( picture_t *p_out, picture_t *p_histo, int x0, int y0, bool switch_uv )
 {
     int u_plane, v_plane;
     u_plane = switch_uv ? V_PLANE : U_PLANE;
@@ -1355,7 +1355,7 @@ int picture_YUVA_BlendToYUV422( picture_t *p_out, picture_t *p_histo, int x0, in
  */
 int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
 {
-    return picture_YUVA_BlendToYUV422( p_out, p_histo, x0, y0, false );
+    return picture_YUVA_BlendToYUV420( p_out, p_histo, x0, y0, false );
 }
 
 /**
@@ -1369,7 +1369,7 @@ int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int 
  */
 int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int y0 )
 {
-    return picture_YUVA_BlendToYUV422( p_out, p_histo, x0, y0, true );
+    return picture_YUVA_BlendToYUV420( p_out, p_histo, x0, y0, true );
 }
 
 int histogram_blend( histogram_t *h, picture_t *p_out )
