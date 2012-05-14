@@ -16,6 +16,11 @@ The following keys are functional:
 [Enter]    : Toggle RGB/Luminance mode (default RGB)
 /          : Toggle R,G,B equalization on/off (default off)
 
+Also, if your cpu is too slow you could try to lower the frame
+rate of the histogram creation and see if it helps.
+Pressing keys [1] through [9], skips the updating of the
+histogram values by 1,2,..,9 frames. Pressing [0] resets
+to default (no frames are skipped).
 
 --
 Copyright 2009, 2012 Yiannis Belias
