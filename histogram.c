@@ -127,6 +127,8 @@ typedef enum {
     HISTO_RGB   = 1,
 } histo_type_e;
 
+static int histogram_check_codec( histo_type_e type, vlc_fourcc_t i_codec );
+
 static int histogram_init( histogram_t **h_in, picture_t *p_in, histo_type_e type );
 static int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec );
 static int histogram_init_picture_yuva( histogram_t *h );
@@ -285,16 +287,22 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     /*In any case, create a simple copy of input*/
     picture_t *p_outpic = picture_CopyAndRelease(p_filter, p_pic);
 
+    int codec = p_filter->fmt_in.i_codec;
     if (draw) {
         switch (type) {
             case HISTO_RGB:
+                /*Do we support the input codec?*/
+                status = histogram_check_codec( HISTO_RGB, codec );
+                if (status != HIST_SUCCESS)
+                    break;
+
                 /*Create an RGB histogram*/
                 if (p_sys->p_histo == NULL || p_sys->p_histo->num_channels != 3) {
                     /*Delete the old histogram  / Create a new RGB histogram*/
                     histogram_free( &p_sys->p_histo );
 
                     status =  histogram_init( &p_sys->p_histo, p_pic, HISTO_RGB );
-                    status += histogram_set_codec( p_sys->p_histo, p_filter->fmt_in.i_codec );
+                    status += histogram_set_codec( p_sys->p_histo, codec );
                 }
                 if (fill) {
                     histogram_zero( p_sys->p_histo );
@@ -306,13 +314,18 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                 if (blend) histogram_blend( p_sys->p_histo, p_outpic );
                 break;
             case HISTO_Y:
+                /*Do we support the input codec?*/
+                status = histogram_check_codec( HISTO_Y, codec );
+                if (status != HIST_SUCCESS)
+                    break;
+
                 /*Create a Luminance histogram*/
                 if (p_sys->p_histo == NULL || p_sys->p_histo->num_channels != 1) {
                     /*Delete the old histogram  / Create a new Y histogram*/
                     histogram_free( &p_sys->p_histo );
 
                     status =  histogram_init( &p_sys->p_histo, p_pic, HISTO_Y );
-                    status += histogram_set_codec( p_sys->p_histo, p_filter->fmt_in.i_codec );
+                    status += histogram_set_codec( p_sys->p_histo, codec );
                 }
                 if (fill) {
                     histogram_zero( p_sys->p_histo );
@@ -332,7 +345,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     if (status != HIST_SUCCESS)
         msg_Warn(p_filter,
                  "Unable to create histogram '%d' for codec '%4.4s'",
-                 type, (char *)&p_filter->fmt_in.i_codec);
+                 type, (char *)&codec);
 
     return p_outpic;
 }
@@ -578,11 +591,70 @@ int histogram_init( histogram_t **h_in, picture_t *p_in, histo_type_e type )
     return HIST_SUCCESS;
 }
 
+/** Check if the (I/O) codec is supported.*/
+int histogram_check_codec( histo_type_e type, vlc_fourcc_t i_codec )
+{
+    int status = HIST_ERROR;
+
+    switch (type) {
+        case HISTO_Y:
+        /*Check for Luminance histogram*/
+        switch (i_codec) {
+            /*  Since we only need use the Y-plane, we can work with any:
+            *   a) Planar YUV, b) with 8-bits on Y-plane c) and NxN sampling on Y-plane
+            *   http://www.fourcc.org/yuv.php says:
+            *   YVU9,YUV9,YV16,YV12,IYUV&I420,NV12,NV21,IMC1,IMC2,IMC3,IMC4,CLPL,Y800,Y8 */
+            case VLC_CODEC_YV9:
+            case VLC_CODEC_YV12:
+            case VLC_CODEC_I420:
+            case VLC_CODEC_J420: /*same as I420*/
+            case VLC_CODEC_I422:
+            case VLC_CODEC_J422: /*same as I422*/
+            case VLC_CODEC_NV12:
+            case VLC_CODEC_NV21:
+            case VLC_CODEC_GREY:  /*Y800,Y8*/
+            case VLC_CODEC_RGB24:
+            case VLC_CODEC_RGB32:
+                status = HIST_SUCCESS;
+                break;
+            default:
+                status = HIST_CODEC_UNSUPPORTED;
+        }
+        break;
+
+        case HISTO_RGB:
+        /*Check for RGB histogram*/
+        switch (i_codec) {
+            case VLC_CODEC_I422:
+            case VLC_CODEC_J422:
+            case VLC_CODEC_I420:
+            case VLC_CODEC_J420:
+            case VLC_CODEC_YV12:
+            case VLC_CODEC_RGB24:
+            case VLC_CODEC_RGB32:
+                status = HIST_SUCCESS;
+                break;
+            case VLC_CODEC_GREY:
+                status = HIST_COLOR_UNSUPPORTED;
+                break;
+            default:
+                status = HIST_CODEC_UNSUPPORTED;
+        }
+        break;
+
+        default:
+            status = HIST_CODEC_UNSUPPORTED;
+    }
+
+    return status;
+}
+
 /**Depending on the (I/O) codec, set the fill/paint/blend functions.*/
 int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec )
 {
     int status = HIST_SUCCESS;
 
+    /*NOTE: If you add/remove codecs, remember to update histogram_check_codec()*/
     if (h->num_channels == 1) {
         /*Create a Luminance histogram*/
         switch (i_codec) {
