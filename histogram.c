@@ -50,7 +50,7 @@
  *****************************************************************************/
 /* #define HISTOGRAM_DEBUG */
 
-#define LITTLE_ENDIAN 1
+#define HISTOGRAM_LITTLE_ENDIAN 1
 #define MAX_NUM_CHANNELS 4   /**< Expect max of 4 channels */
 
 static int  Open      ( vlc_object_t * );
@@ -1289,7 +1289,7 @@ inline uint8_t* xyca2pc(int x, int y, int c, plane_t *plane)
 int histogram_yuv_paintToRGBA( histogram_t *histo, picture_t *p_bgra )
 {
     const int y0 = 1;
-#ifdef LITTLE_ENDIAN
+#ifdef HISTOGRAM_LITTLE_ENDIAN
     const uint32_t bright = MAX_PIXEL_VALUE<<0  |
                             MAX_PIXEL_VALUE<<8  |
                             MAX_PIXEL_VALUE<<16 |
@@ -1307,7 +1307,7 @@ int histogram_yuv_paintToRGBA( histogram_t *histo, picture_t *p_bgra )
                             SHADOW_PIXEL_VALUE<<16 |
                             SHADOW_PIXEL_VALUE<<8  |
                             HISTOGRAM_ALPHA;
-#endif /*LITTLE_ENDIAN*/
+#endif /*HISTOGRAM_LITTLE_ENDIAN*/
 
 #define P(x,y) xy_rgba2p( (x), (y), &p_bgra->p[RGB_PLANE] )
     /*For each bin in the histogram, paint a vertical bar*/
@@ -1683,7 +1683,7 @@ int histogram_rgb_paintToRGBA( histogram_t *histo, picture_t *p_bgra )
               yg0 = yr0 + histo->height + BOTTOM_MARGIN,
               yb0 = yg0 + histo->height + BOTTOM_MARGIN;
 
-#ifdef LITTLE_ENDIAN
+#ifdef HISTOGRAM_LITTLE_ENDIAN
     const uint32_t red   = 0x00FF0000 | HISTOGRAM_ALPHA<<24,
                    green = 0x0000FF00 | HISTOGRAM_ALPHA<<24,
                    blue  = 0x000000FF | HISTOGRAM_ALPHA<<24,
@@ -1699,7 +1699,7 @@ int histogram_rgb_paintToRGBA( histogram_t *histo, picture_t *p_bgra )
                            SHADOW_PIXEL_VALUE<<16 |
                            SHADOW_PIXEL_VALUE<<8  |
                            HISTOGRAM_ALPHA;
-#endif /*LITTLE_ENDIAN*/
+#endif /*HISTOGRAM_LITTLE_ENDIAN*/
 
 #define P(x,y) xy_rgba2p( (x), (y), &p_bgra->p[RGB_PLANE] )
     /*For each bin in the histogram, paint a vertical bar in R/G/B color*/
