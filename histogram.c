@@ -25,10 +25,6 @@
  * Preamble
  *****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-# include "config.h"
-#endif
-
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
@@ -44,6 +40,8 @@
 #include <vlc_filter.h>
 
 #include <png.h>
+
+#include "config.h"
 
 #include "filter_picture.h"
 
@@ -79,7 +77,9 @@ static inline uint32_t* xy_rgba2p(int x, int y, plane_t *plane);
 #ifdef HISTOGRAM_DEBUG
 static void dump_format( video_format_t *fmt );
 static void dump_picture( picture_t *p_pic, const char *name );
+#ifdef HAVE_PNG
 static int write_png(picture_t *p_bgra, const char *name);
+#endif /*HAVE_PNG*/
 #endif
 
 static const uint8_t MAX_PIXEL_VALUE        = 255; /**< Support only 8-bit per channel picture_t        */
@@ -433,9 +433,11 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
             p_sys->equalize = !p_sys->equalize;
             break;
 #ifdef HISTOGRAM_DEBUG
-        case 'd':
+        case 'w':
             dump_histogram( p_sys->p_histo );
+#ifdef HAVE_PNG
             write_png( p_sys->p_histo->p_overlay, "overlay" );
+#endif /*HAVE_PNG*/
             break;
 #endif
     }
@@ -1820,6 +1822,7 @@ void dump_picture( picture_t *p_pic, const char *name )
     printf("\n} %s\n\n",name);
 }
 
+#ifdef HAVE_PNG
 int write_png(picture_t *p_bgra, const char *name)
 {
     static int file_id = 0;
@@ -1948,6 +1951,7 @@ int write_png(picture_t *p_bgra, const char *name)
    /* That's it */
    return HIST_SUCCESS;
 }
+#endif /*HAVE_PNG*/
 
 
 #endif

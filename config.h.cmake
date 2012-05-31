@@ -1,0 +1,7 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+@CONFIG_PNG_DEFINE@
+@CONFIG_DEBUG@
+
+#endif /*CONFIG_H*/
