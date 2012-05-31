@@ -29,6 +29,7 @@
 # include "config.h"
 #endif
 
+#include <stdlib.h>
 #include <math.h>
 #include <string.h>
 #include <assert.h>
@@ -41,6 +42,8 @@
 #include <vlc_keys.h>
 
 #include <vlc_filter.h>
+
+#include <png.h>
 
 #include "filter_picture.h"
 
@@ -74,6 +77,7 @@ static inline uint32_t* xy_rgba2p(int x, int y, plane_t *plane);
 #ifdef HISTOGRAM_DEBUG
 static void dump_format( video_format_t *fmt );
 static void dump_picture( picture_t *p_pic, const char *name );
+static int write_png(picture_t *p_bgra, const char *name);
 #endif
 
 static const uint8_t MAX_PIXEL_VALUE        = 255; /**< Support only 8-bit per channel picture_t        */
@@ -426,6 +430,12 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
         case '/':
             p_sys->equalize = !p_sys->equalize;
             break;
+#ifdef HISTOGRAM_DEBUG
+        case 'd':
+            dump_histogram( p_sys->p_histo );
+            write_png( p_sys->p_histo->p_overlay, "overlay" );
+            break;
+#endif
     }
 
     vlc_mutex_unlock( &p_sys->lock );
@@ -1783,6 +1793,137 @@ void dump_picture( picture_t *p_pic, const char *name )
     printf("  p[2]->(%d,%d):%p ", p_pic->p[2].i_pitch, p_pic->p[2].i_lines, p_pic->p[2].p_pixels);
     printf("\n} %s\n\n",name);
 }
+
+int write_png(picture_t *p_bgra, const char *name)
+{
+    static int file_id = 0;
+    char filename[128];
+
+    FILE *fp;
+    png_structp png_ptr;
+    png_infop info_ptr;
+
+    int width  = p_bgra->p[RGB_PLANE].i_visible_pitch/4;
+    int height = p_bgra->p[RGB_PLANE].i_visible_lines;
+    int pitch  = p_bgra->p[RGB_PLANE].i_pitch;
+    png_byte *image = (png_byte*)p_bgra->p[RGB_PLANE].p_pixels;
+
+    /* Open the file */
+    snprintf(filename, sizeof filename, "%06d-%s.png", file_id++, name);
+    fp = fopen(filename, "wb");
+    if (fp == NULL)
+       return HIST_ERROR;
+
+    /* Create and initialize the png_struct with the desired error handler
+     * functions.  If you want to use the default stderr and longjump method,
+     * you can supply NULL for the last three parameters.  We also check that
+     * the library version is compatible with the one used at compile time,
+     * in case we are using dynamically linked libraries.  REQUIRED.
+     */
+    png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING,
+       NULL, NULL, NULL);
+
+    if (png_ptr == NULL)
+    {
+       fclose(fp);
+       return HIST_ERROR;
+    }
+
+    /* Allocate/initialize the image information data.  REQUIRED */
+    info_ptr = png_create_info_struct(png_ptr);
+    if (info_ptr == NULL)
+    {
+       fclose(fp);
+       png_destroy_write_struct(&png_ptr,  NULL);
+       return HIST_ERROR;
+    }
+
+    /* Set error handling.  REQUIRED if you aren't supplying your own
+     * error handling functions in the png_create_write_struct() call.
+     */
+    if (setjmp(png_jmpbuf(png_ptr)))
+    {
+       /* If we get here, we had a problem writing the file */
+       fclose(fp);
+       png_destroy_write_struct(&png_ptr, &info_ptr);
+       return HIST_ERROR;
+    }
+
+    /* One of the following I/O initialization functions is REQUIRED */
+
+    /* Set up the output control if you are using standard C streams */
+    png_init_io(png_ptr, fp);
+
+    /* This is the hard way */
+
+    /* Set the image information here.  Width and height are up to 2^31,
+     * bit_depth is one of 1, 2, 4, 8, or 16, but valid values also depend on
+     * the color_type selected. color_type is one of PNG_COLOR_TYPE_GRAY,
+     * PNG_COLOR_TYPE_GRAY_ALPHA, PNG_COLOR_TYPE_PALETTE, PNG_COLOR_TYPE_RGB,
+     * or PNG_COLOR_TYPE_RGB_ALPHA.  interlace is either PNG_INTERLACE_NONE or
+     * PNG_INTERLACE_ADAM7, and the compression_type and filter_type MUST
+     * currently be PNG_COMPRESSION_TYPE_BASE and PNG_FILTER_TYPE_BASE. REQUIRED
+     */
+    png_set_IHDR(png_ptr, info_ptr, width, height, 8, PNG_COLOR_TYPE_RGB_ALPHA,
+       PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
+
+    /* Optional gamma chunk is strongly suggested if you have any guess
+     * as to the correct gamma of the image.
+     */
+    png_set_gAMA(png_ptr, info_ptr, 1.0);
+
+    /* Write the file header information.  REQUIRED */
+    png_write_info(png_ptr, info_ptr);
+
+#if 0
+   /* Set up the transformations you want.  Note that these are
+    * all optional.  Only call them if you want them.
+    */
+
+   /* Swap location of alpha bytes from ARGB to RGBA */
+   png_set_swap_alpha(png_ptr);
+
+   /* Get rid of filler (OR ALPHA) bytes, pack XRGB/RGBX/ARGB/RGBA into
+    * RGB (4 channels -> 3 channels). The second parameter is not used.
+    */
+   png_set_filler(png_ptr, 0, PNG_FILLER_BEFORE);
+
+   /* Flip BGR pixels to RGB */
+   png_set_bgr(png_ptr);
+#endif
+
+   /* The easiest way to write the image (you may have a different memory
+    * layout, however, so choose what fits your needs best).  You need to
+    * use the first method if you aren't handling interlacing yourself.
+    */
+   png_bytep row_pointers[height];
+
+   if (height > PNG_UINT_32_MAX/png_sizeof(png_bytep))
+     png_error (png_ptr, "Image is too tall to process in memory");
+
+   int k;
+   for (k = 0; k < height; k++)
+     row_pointers[k] = image + k*pitch;
+
+   /* One of the following output methods is REQUIRED */
+
+/* Write out the entire image data in one call */
+   png_write_image(png_ptr, row_pointers);
+
+   /* It is REQUIRED to call this to finish writing the rest of the file */
+   png_write_end(png_ptr, info_ptr);
+
+   /* Clean up after the write, and free any memory allocated */
+   png_destroy_write_struct(&png_ptr, &info_ptr);
+
+   /* Close the file */
+   fclose(fp);
+
+   /* That's it */
+   return HIST_SUCCESS;
+}
+
+
 #endif
 
 /*
