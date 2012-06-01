@@ -1283,8 +1283,15 @@ int histogram_rgb_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
 int histogram_yuv_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
 {
     const int y0 = 1;
+    uint8_t gray_y, gray_u, gray_v, bright_y, bright_u, bright_v;
+    rgb_to_yuv( &gray_y, &gray_u, &gray_v,
+                SHADOW_PIXEL_VALUE, SHADOW_PIXEL_VALUE, SHADOW_PIXEL_VALUE );
+    rgb_to_yuv( &bright_y, &bright_u, &bright_v,
+                MAX_PIXEL_VALUE, MAX_PIXEL_VALUE, MAX_PIXEL_VALUE );
 
 #define P_Y(x,y) xy2p( (x), (y), &p_yuv->p[Y_PLANE] )
+#define P_U(x,y) xy2p( (x), (y), &p_yuv->p[U_PLANE] )
+#define P_V(x,y) xy2p( (x), (y), &p_yuv->p[V_PLANE] )
 #define P_A(x,y) xy2p( (x), (y), &p_yuv->p[A_PLANE] )
     /*For each bin in the histogram, paint a vertical bar in Y*/
     for (int bin=0; bin < histo->num_bins; bin++) {
@@ -1295,20 +1302,28 @@ int histogram_yuv_paintToYUVA( histogram_t *histo, picture_t *p_yuv )
        /*Paint bar*/
        for (uint32_t j = 0; j <= histo->bins[Y][bin]; j++) {
           int y = y0 + j;
-          *P_Y(x,y) = MAX_PIXEL_VALUE;
+          *P_Y(x,y) = bright_y;
+          *P_U(x,y) = bright_u;
+          *P_V(x,y) = bright_v;
           *P_A(x,y) = HISTOGRAM_ALPHA;
        }
        /*Drop shadow, 1 pel right - 1 pel below bar*/
        for (uint32_t j = js0; j < histo->bins[Y][bin]; j++) {
           int y = y0 + j;
-          *P_Y(x+1,y) = SHADOW_PIXEL_VALUE;
+          *P_Y(x+1,y) = gray_y;
+          *P_U(x+1,y) = gray_u;
+          *P_V(x+1,y) = gray_v;
           *P_A(x+1,y) = HISTOGRAM_ALPHA;
        }
        /*Drop shadow under the next red bar*/
-       *P_Y(x+1,y0-1) = SHADOW_PIXEL_VALUE;
+       *P_Y(x+1,y0-1) = gray_y;
+       *P_U(x+1,y0-1) = gray_u;
+       *P_V(x+1,y0-1) = gray_v;
        *P_A(x+1,y0-1) = HISTOGRAM_ALPHA;
     }
 #undef P_Y
+#undef P_U
+#undef P_V
 #undef P_A
 
     return HIST_SUCCESS;
