@@ -91,7 +91,7 @@ static const int     LEFT_MARGIN            = 20;
 static const int     BOTTOM_MARGIN          = 10;
 static const int     HISTOGRAM_HEIGHT       = 50;  /**< Default histogram height                        */
 static const int     HISTOGRAM_MIN_HEIGHT   = 50;  /**< Default histogram height                        */
-static const int     HISTOGRAM_ALPHA        = 150; /**< Default alpha valueeight                        */
+static const int     HISTOGRAM_ALPHA        = 150; /**< Default alpha value                             */
 
 /*Return values*/
 static const int     HIST_SUCCESS           = -0;
@@ -152,6 +152,7 @@ static int histogram_rgb_fillFromYUV420( histogram_t *h_rgb, const picture_t *p_
 static int histogram_yuv_fillFromRGB24( histogram_t *h, const picture_t *p_bgr );
 static int histogram_yuv_fillFromRGB32( histogram_t *h, const picture_t *p_bgr );
 static int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv );
+static int histogram_yuv_fillFromYUYV( histogram_t *h, const picture_t *p_yuv );
 static int histogram_update_max( histogram_t *h );
 static int histogram_free( histogram_t **h );
 static int histogram_normalize( histogram_t *h, bool log, bool equalize );
@@ -643,6 +644,7 @@ int histogram_check_codec( histo_type_e type, vlc_fourcc_t i_codec )
             case VLC_CODEC_GREY:  /*Y800,Y8*/
             case VLC_CODEC_RGB24:
             case VLC_CODEC_RGB32:
+            case VLC_CODEC_YUYV: /*same as YUY2,YUNV,V422*/
                 status = HIST_SUCCESS;
                 break;
             default:
@@ -660,7 +662,7 @@ int histogram_check_codec( histo_type_e type, vlc_fourcc_t i_codec )
             case VLC_CODEC_YV12:
             case VLC_CODEC_RGB24:
             case VLC_CODEC_RGB32:
-            case VLC_CODEC_YUYV: /*same as YUY2,YUNV,V422*/
+            case VLC_CODEC_YUYV:
                 status = HIST_SUCCESS;
                 break;
             case VLC_CODEC_GREY:
@@ -703,6 +705,12 @@ int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec )
                 h->fill_func  = &histogram_yuv_fillFromYUVPlanar;
                 h->paint_func = &histogram_yuv_paintToYUVA;
                 h->blend_func = &picture_YUVA_BlendToY800;
+                histogram_init_picture_yuva( h );
+                break;
+            case VLC_CODEC_YUYV:
+                h->fill_func  = histogram_yuv_fillFromYUYV;
+                h->paint_func = histogram_yuv_paintToYUVA;
+                h->blend_func = picture_YUVA_BlendToYUYV;
                 histogram_init_picture_yuva( h );
                 break;
             case VLC_CODEC_RGB24:
@@ -1047,6 +1055,31 @@ int histogram_yuv_fillFromYUVPlanar( histogram_t *h, const picture_t *p_yuv )
     }
 
     return HIST_SUCCESS;
+}
+
+int histogram_yuv_fillFromYUVPacked( histogram_t *h, const picture_t *p_yuv, int yoffset, int step )
+{
+    if (!h)
+        return HIST_INPUT_ERROR;
+
+    int pitch         = p_yuv->p[Y_PLANE].i_pitch,
+        visible_pitch = p_yuv->p[Y_PLANE].i_visible_pitch;
+    uint8_t *start = p_yuv->p[Y_PLANE].p_pixels + yoffset,
+            *end = start + pitch * p_yuv->p[Y_PLANE].i_visible_lines;
+
+    int shift = 8 - (int)round( log2(h->num_bins) );
+    for (uint8_t *line = start; line != end; line += pitch) {
+        const uint8_t const *end_visible = line+visible_pitch;
+        for (uint8_t *pel = line; pel != end_visible; pel+=step)
+            h->bins[Y][(*pel)>>shift]++;
+    }
+
+    return HIST_SUCCESS;
+}
+
+int histogram_yuv_fillFromYUYV( histogram_t *h, const picture_t *p_yuv )
+{
+    return histogram_yuv_fillFromYUVPacked( h, p_yuv, 0, 2 );
 }
 
 int histogram_yuv_fillFromRGB24_32( histogram_t *h, const picture_t *p_bgr, bool rgb24 )
