@@ -67,7 +67,7 @@ static int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x
 static int picture_RGBA_BlendToRGB24( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_RGBA_BlendToRGB32( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static picture_t* picture_CopyAndRelease(filter_t *p_filter, picture_t *p_pic);
-static picture_t* picture_ANY_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic );
+static picture_t* picture_convertTo( vlc_fourcc_t i_chroma_out, picture_t *p_pic, filter_t *p_filter, int *new_picture );
 static picture_t* picture_RGB24_ConvertToOutputFmt( filter_t *p_filter, picture_t *p_bgr );
 static void picture_ZeroPixels( picture_t *p_pic );
 #ifdef HISTOGRAM_DEBUG
@@ -79,7 +79,7 @@ static inline uint32_t* xy_rgba2p(int x, int y, plane_t *plane);
 static void dump_format( video_format_t *fmt );
 static void dump_picture( picture_t *p_pic, const char *name );
 #ifdef HAVE_PNG
-static int write_png(picture_t *p_bgra, const char *name);
+static int write_png(picture_t *p_bgra, const char *name, filter_t *p_filter);
 #endif /*HAVE_PNG*/
 #endif
 
@@ -435,10 +435,10 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
             p_sys->equalize = !p_sys->equalize;
             break;
 #ifdef HISTOGRAM_DEBUG
-        case 'w':
+        case 'w': //FIXME
             dump_histogram( p_sys->p_histo );
 #ifdef HAVE_PNG
-            write_png( p_sys->p_histo->p_overlay, "overlay" );
+            write_png( p_sys->p_histo->p_overlay, "overlay", p_filter );
 #endif /*HAVE_PNG*/
             break;
 #endif
@@ -449,25 +449,37 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
     return VLC_SUCCESS;
 }
 
-picture_t* picture_ANY_ConvertToRGB24( filter_t *p_filter, picture_t *p_pic )
+/**
+ * Return a new image, with different format.
+ *
+ * 'new_picture' means:
+ * 0: the returned picture is the actual input image (no converting has taken place).
+ * 1: the returned picture should be deallocated.
+ */
+picture_t* picture_convertTo( vlc_fourcc_t i_chroma_out, picture_t *p_pic, filter_t *p_filter, int *new_picture )
 {
-    if (p_pic->format.i_chroma == VLC_CODEC_RGB24)
+    if (p_pic->format.i_chroma == i_chroma_out) {
+        *new_picture = 0;
         return p_pic;
+    }
 
-    video_format_t fmt_in;
-    video_format_t fmt_bgr;
-    video_format_Copy( &fmt_in, &p_filter->fmt_in.video );
-    video_format_Init( &fmt_bgr, VLC_CODEC_RGB24 );
+#ifdef HISTOGRAM_DEBUG
+    printf("Converting '%4.4s' to '%4.4s'\n", (char*)&(p_pic->format.i_chroma), (char*)&i_chroma_out);
+#endif
+    video_format_t fmt_out;
+    video_format_Init( &fmt_out, i_chroma_out );
 
     image_handler_t *img_handler = image_HandlerCreate( p_filter );
 
-    picture_t *p_bgr = image_Convert( img_handler, p_pic, &fmt_in, &fmt_bgr );
+    // Using picture_t::format[video_frame_format_t], typedef to video_format_t
+    picture_t *p_out = image_Convert( img_handler, p_pic, &p_pic->format, &fmt_out );
 
     /*Cleanup*/
-    video_format_Clean( &fmt_in );
-    video_format_Clean( &fmt_bgr );
+    video_format_Clean( &fmt_out );
     image_HandlerDelete( img_handler );
-    return p_bgr;
+
+    *new_picture = 1;
+    return p_out;
 }
 
 picture_t* picture_RGB24_ConvertToOutputFmt( filter_t *p_filter, picture_t *p_bgr )
@@ -1922,7 +1934,7 @@ void dump_picture( picture_t *p_pic, const char *name )
 }
 
 #ifdef HAVE_PNG
-int write_png(picture_t *p_bgra, const char *name)
+int write_png(picture_t *p_bgra, const char *name, filter_t *p_filter)
 {
     static int file_id = 0;
     char filename[128];
@@ -1930,6 +1942,9 @@ int write_png(picture_t *p_bgra, const char *name)
     FILE *fp;
     png_structp png_ptr;
     png_infop info_ptr;
+
+    int release_pic;
+    p_bgra = picture_convertTo( VLC_CODEC_RGBA, p_bgra, p_filter, &release_pic );
 
     int width  = p_bgra->p[RGB_PLANE].i_visible_pitch/4;
     int height = p_bgra->p[RGB_PLANE].i_visible_lines;
@@ -2043,6 +2058,8 @@ int write_png(picture_t *p_bgra, const char *name)
 
    /* Clean up after the write, and free any memory allocated */
    png_destroy_write_struct(&png_ptr, &info_ptr);
+   if (release_pic)
+       picture_Release( p_bgra );
 
    /* Close the file */
    fclose(fp);
