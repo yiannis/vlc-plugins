@@ -60,6 +60,7 @@ static picture_t *Filter( filter_t *, picture_t * );
 
 static int picture_YUVA_BlendToI420( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_YUVA_BlendToI422( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
+static int picture_YUVA_BlendToYUYV( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_YUVA_BlendToYV12( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_YUVA_BlendToYV16( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
 static int picture_YUVA_BlendToY800( picture_t *p_out, picture_t *p_histo, int x0, int y0 );
@@ -143,6 +144,7 @@ static int histogram_rgb_fillFromRGB24( histogram_t *h, const picture_t *p_bgr )
 static int histogram_rgb_fillFromRGB32( histogram_t *h, const picture_t *p_bgr );
 static int histogram_rgb_fillFromI420( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_rgb_fillFromI422( histogram_t *h_rgb, const picture_t *p_yuv );
+static int histogram_rgb_fillFromYUYV( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_rgb_fillFromYV12( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_rgb_fillFromYV16( histogram_t *h_rgb, const picture_t *p_yuv );
 static int histogram_rgb_fillFromRGB24_32( histogram_t *h, const picture_t *p_bgr, bool rgb24 );
@@ -646,6 +648,7 @@ int histogram_check_codec( histo_type_e type, vlc_fourcc_t i_codec )
             case VLC_CODEC_YV12:
             case VLC_CODEC_RGB24:
             case VLC_CODEC_RGB32:
+            case VLC_CODEC_YUYV: /*same as YUY2,YUNV,V422*/
                 status = HIST_SUCCESS;
                 break;
             case VLC_CODEC_GREY:
@@ -726,6 +729,12 @@ int histogram_set_codec( histogram_t *h, vlc_fourcc_t i_codec )
                 h->fill_func  = histogram_rgb_fillFromYV12;
                 h->paint_func = histogram_rgb_paintToYUVA;
                 h->blend_func = picture_YUVA_BlendToYV12;
+                histogram_init_picture_yuva( h );
+                break;
+            case VLC_CODEC_YUYV:
+                h->fill_func  = histogram_rgb_fillFromYUYV;
+                h->paint_func = histogram_rgb_paintToYUVA;
+                h->blend_func = picture_YUVA_BlendToYUYV;
                 histogram_init_picture_yuva( h );
                 break;
             case VLC_CODEC_RGB24:
@@ -863,6 +872,34 @@ int histogram_rgb_fillFromYUV422( histogram_t *h_rgb, const picture_t *p_yuv, bo
         y = y_next_line;
         u = u_next_line;
         v = v_next_line;
+    }
+
+    return HIST_SUCCESS;
+}
+
+int histogram_rgb_fillFromYUYV( histogram_t *h_rgb, const picture_t *p_yuv )
+{
+    if (!h_rgb || !p_yuv)
+        return HIST_INPUT_ERROR;
+
+    int r,g,b;
+    int shift = 8 - (int)round( log2(h_rgb->num_bins) );
+    int pitch         = p_yuv->p[Y_PLANE].i_pitch,
+        visible_pitch = p_yuv->p[Y_PLANE].i_visible_pitch;
+    uint8_t *p_pixel = p_yuv->p[Y_PLANE].p_pixels,
+            *p_end   = p_pixel + pitch * p_yuv->p[Y_PLANE].i_visible_lines;
+
+    while (p_pixel != p_end) {
+        uint8_t *p_end_line  = p_pixel+visible_pitch,
+                *p_next_line = p_pixel+pitch;
+        while (p_pixel != p_end_line) {
+            yuv_to_rgb( &r, &g, &b, *p_pixel, *(p_pixel+1), *(p_pixel+3) );
+            h_rgb->bins[R][r>>shift]++;
+            h_rgb->bins[G][g>>shift]++;
+            h_rgb->bins[B][b>>shift]++;
+            p_pixel+=4; /*Move to next macro-pixel*/
+        }
+        p_pixel = p_next_line;
     }
 
     return HIST_SUCCESS;
@@ -1507,6 +1544,68 @@ int picture_YUVA_BlendToYUV422( picture_t *p_out, picture_t *p_histo, int x0, in
         o = o_line_next;
         uo = uo_line_next;
         vo = vo_line_next;
+    }
+
+    return HIST_SUCCESS;
+}
+
+int picture_YUVA_BlendToYUYV( picture_t *p_out, picture_t *p_histo, int xoffset, int yoffset )
+{
+    int a_pitch = p_histo->p[A_PLANE].i_pitch,
+        y_pitch = p_histo->p[Y_PLANE].i_pitch,
+        u_pitch = p_histo->p[U_PLANE].i_pitch,
+        v_pitch = p_histo->p[V_PLANE].i_pitch,
+        y_width = p_histo->p[Y_PLANE].i_visible_pitch,
+        o_pitch = p_out->p[Y_PLANE].i_pitch;
+    uint8_t vt0, vt1, ut0, ut1;
+    uint8_t *y = p_histo->p[Y_PLANE].p_pixels,
+            *u = p_histo->p[U_PLANE].p_pixels,
+            *v = p_histo->p[V_PLANE].p_pixels,
+            *a = p_histo->p[A_PLANE].p_pixels,
+            *o = p_out->p[Y_PLANE].p_pixels + yoffset*o_pitch + 2 * (xoffset/2)*2;
+    /*xoffset should be a multiple of '2' to be aligned on a macro-pixel*/
+    uint8_t *y_end = y + p_histo->p[Y_PLANE].i_visible_lines*y_pitch;
+    uint8_t *y0, *y1,
+            *u0, *u1,
+            *v0, *v1,
+            *a0, *a1,
+            *oy0, *oy1,
+            *ou0,
+            *ov0;
+
+    while (y < y_end) {
+        uint8_t *y_line_end = y+y_width;
+        uint8_t *y_line_next = y + y_pitch;
+        uint8_t *u_line_next = u + u_pitch;
+        uint8_t *v_line_next = v + v_pitch;
+        uint8_t *a_line_next = a + a_pitch;
+        uint8_t *o_line_next = o + o_pitch;
+        while (y < y_line_end) {
+            y0 = y; y1 = y+1;
+            u0 = u; u1 = u+1;
+            v0 = v; v1 = v+1;
+            a0 = a; a1 = a+1;
+            oy0 = o; oy1 = o+2;
+            ou0 = o+1; ov0 = o+3;
+
+            *oy0 = blend( *y0, *oy0, *a0 );
+            *oy1 = blend( *y1, *oy1, *a1 );
+
+            ut0 = blend( *u0, *ou0, *a0 );
+            ut1 = blend( *u1, *ou0, *a1 );
+            *ou0 = (ut0+ut1)>>1;
+
+            vt0 = blend( *v0, *ov0, *a0 );
+            vt1 = blend( *v1, *ov0, *a1 );
+            *ov0 = (vt0+vt1)>>1;
+
+            y+=2; u+=2; v+=2; a+=2; o+=4;
+        }
+        y = y_line_next;
+        u = u_line_next;
+        v = v_line_next;
+        a = a_line_next;
+        o = o_line_next;
     }
 
     return HIST_SUCCESS;

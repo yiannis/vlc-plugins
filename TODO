@@ -1,3 +1,5 @@
++ Move 'int shift = 8 - (int)round( log2(h_rgb->num_bins) )' to
+  a function, or somewhere inside histo struct.
 + Add vlc options for:
   - x0,y0
   - transparency
